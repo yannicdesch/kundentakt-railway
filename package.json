@@ -1,0 +1,17 @@
+{
+  "name": "kundentakt-voice-agent",
+  "version": "1.0.0",
+  "description": "Backend-Service für Kundentakt: Telefon-Webhook & Twilio-Integration",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.4.0",
+    "express": "^4.18.2",
+    "twilio": "^4.20.0"
+  }
+}
