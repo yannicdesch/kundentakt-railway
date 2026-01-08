@@ -76,21 +76,13 @@ wsServer.on("connection", async (twilioWs, req) => {
   let businessName = "Kundentakt";
   let callStartTime = Date.now();
   let transcript = [];
-
-  // Connection to OpenAI Realtime API
-  const openaiWs = new WebSocket(
-    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1",
-      },
-    }
-  );
+  let openaiWs = null;
+  let sessionConfigured = false;
+  let streamSid = "";
 
   // Build system prompt from business data
-  const buildSystemPrompt = async (bizId) => {
-    let prompt = `Du bist der freundliche Telefonassistent von ${businessName}. Sprich Deutsch und sei hilfsbereit.`;
+  const buildSystemPrompt = async (bizId, bizName) => {
+    let prompt = `Du bist der freundliche Telefonassistent von ${bizName}. Sprich Deutsch und sei hilfsbereit.`;
 
     if (!bizId) return prompt;
 
@@ -160,89 +152,151 @@ wsServer.on("connection", async (twilioWs, req) => {
 - Bei Notfällen (Wasserrohrbruch, Stromausfall, etc.) markiere dies als dringend
 - Frage nach, ob ein Rückruf gewünscht wird
 - Sei freundlich und professionell
-- Halte die Antworten kurz und prägnant`;
+- Halte die Antworten kurz und prägnant
+- Beginne das Gespräch mit einer freundlichen Begrüßung`;
 
     return prompt;
   };
 
-  // When OpenAI connects
-  openaiWs.on("open", async () => {
-    console.log("🧠 Verbunden mit OpenAI Realtime");
-  });
-
-  // Handle OpenAI session created
-  openaiWs.on("message", async (msg) => {
-    try {
-      const data = JSON.parse(msg.toString());
-
-      if (data.type === "session.created") {
-        console.log("📝 OpenAI Session erstellt");
-
-        const systemPrompt = await buildSystemPrompt(businessId);
-
-        // Configure session
-        openaiWs.send(
-          JSON.stringify({
-            type: "session.update",
-            session: {
-              modalities: ["text", "audio"],
-              instructions: systemPrompt,
-              voice: "alloy",
-              input_audio_format: "g711_ulaw",
-              output_audio_format: "g711_ulaw",
-              input_audio_transcription: {
-                model: "whisper-1",
-              },
-              turn_detection: {
-                type: "server_vad",
-                threshold: 0.5,
-                prefix_padding_ms: 300,
-                silence_duration_ms: 500,
-              },
-            },
-          })
-        );
-
-        // Initial greeting
-        setTimeout(() => {
-          openaiWs.send(
-            JSON.stringify({
-              type: "response.create",
-              response: {
-                modalities: ["audio", "text"],
-              },
-            })
-          );
-        }, 500);
-      }
-
-      // Collect transcript
-      if (data.type === "conversation.item.input_audio_transcription.completed") {
-        transcript.push({ role: "user", text: data.transcript });
-      }
-
-      if (data.type === "response.audio_transcript.done") {
-        transcript.push({ role: "assistant", text: data.transcript });
-      }
-
-      // Send audio to Twilio
-      if (data.type === "response.audio.delta" && data.delta) {
-        if (twilioWs.readyState === WebSocket.OPEN) {
-          twilioWs.send(
-            JSON.stringify({
-              event: "media",
-              media: { payload: data.delta },
-            })
-          );
-        }
-      }
-    } catch (err) {
-      console.error("Fehler bei OpenAI-Antwort:", err.message);
+  // Configure OpenAI session after we have business data
+  const configureOpenAISession = async () => {
+    if (sessionConfigured || !openaiWs || openaiWs.readyState !== WebSocket.OPEN) {
+      return;
     }
-  });
+    sessionConfigured = true;
 
-  // Audio from Twilio → OpenAI
-  twilioWs.on("message", (msg) => {
+    console.log(`🔧 Konfiguriere OpenAI Session für: ${businessName} (${businessId})`);
+
+    const systemPrompt = await buildSystemPrompt(businessId, businessName);
+    console.log("📝 System Prompt erstellt, Länge:", systemPrompt.length);
+
+    // Configure session
+    openaiWs.send(
+      JSON.stringify({
+        type: "session.update",
+        session: {
+          modalities: ["text", "audio"],
+          instructions: systemPrompt,
+          voice: "alloy",
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
+          input_audio_transcription: {
+            model: "whisper-1",
+          },
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 500,
+          },
+        },
+      })
+    );
+    console.log("✅ Session.update gesendet");
+  };
+
+  // Trigger initial AI greeting
+  const triggerGreeting = () => {
+    if (!openaiWs || openaiWs.readyState !== WebSocket.OPEN) {
+      console.log("⚠️ OpenAI nicht bereit für Greeting");
+      return;
+    }
+
+    console.log("🎤 Triggere AI Begrüßung...");
+    openaiWs.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"],
+        },
+      })
+    );
+  };
+
+  // Connect to OpenAI Realtime API
+  const connectToOpenAI = () => {
+    console.log("🔌 Verbinde mit OpenAI Realtime API...");
+    
+    openaiWs = new WebSocket(
+      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "OpenAI-Beta": "realtime=v1",
+        },
+      }
+    );
+
+    openaiWs.on("open", () => {
+      console.log("🧠 Verbunden mit OpenAI Realtime");
+    });
+
+    openaiWs.on("message", async (msg) => {
+      try {
+        const data = JSON.parse(msg.toString());
+
+        if (data.type === "session.created") {
+          console.log("📝 OpenAI Session erstellt, warte auf Twilio Start...");
+          // Don't configure yet - wait for Twilio start event with business data
+        }
+
+        if (data.type === "session.updated") {
+          console.log("✅ OpenAI Session konfiguriert, triggere Begrüßung...");
+          // Now trigger the greeting after session is configured
+          setTimeout(triggerGreeting, 300);
+        }
+
+        if (data.type === "error") {
+          console.error("❌ OpenAI Fehler:", JSON.stringify(data.error));
+        }
+
+        // Collect transcript
+        if (data.type === "conversation.item.input_audio_transcription.completed") {
+          console.log("👤 User:", data.transcript);
+          transcript.push({ role: "user", text: data.transcript });
+        }
+
+        if (data.type === "response.audio_transcript.done") {
+          console.log("🤖 Assistant:", data.transcript);
+          transcript.push({ role: "assistant", text: data.transcript });
+        }
+
+        // Send audio to Twilio
+        if (data.type === "response.audio.delta" && data.delta) {
+          if (twilioWs.readyState === WebSocket.OPEN && streamSid) {
+            twilioWs.send(
+              JSON.stringify({
+                event: "media",
+                streamSid: streamSid,
+                media: { payload: data.delta },
+              })
+            );
+          }
+        }
+
+        if (data.type === "response.audio.done") {
+          console.log("🔊 Audio Response abgeschlossen");
+        }
+
+      } catch (err) {
+        console.error("Fehler bei OpenAI-Antwort:", err.message);
+      }
+    });
+
+    openaiWs.on("error", (err) => {
+      console.error("❌ OpenAI WebSocket Fehler:", err.message);
+    });
+
+    openaiWs.on("close", () => {
+      console.log("🔌 OpenAI Verbindung geschlossen");
+    });
+  };
+
+  // Start OpenAI connection immediately
+  connectToOpenAI();
+
+  // Audio from Twilio
+  twilioWs.on("message", async (msg) => {
     try {
       const data = JSON.parse(msg.toString());
 
@@ -252,11 +306,19 @@ wsServer.on("connection", async (twilioWs, req) => {
         callerNumber = params.callerNumber || "";
         callSid = params.callSid || "";
         businessName = params.businessName || "Kundentakt";
+        streamSid = data.start.streamSid || "";
         callStartTime = Date.now();
-        console.log(`📋 Call gestartet: Business=${businessName}, Caller=${callerNumber}`);
+        
+        console.log(`📋 Twilio Stream gestartet:`);
+        console.log(`   - Business: ${businessName} (${businessId})`);
+        console.log(`   - Caller: ${callerNumber}`);
+        console.log(`   - StreamSid: ${streamSid}`);
+
+        // NOW configure OpenAI with the business data
+        await configureOpenAISession();
       }
 
-      if (data.event === "media" && openaiWs.readyState === WebSocket.OPEN) {
+      if (data.event === "media" && openaiWs && openaiWs.readyState === WebSocket.OPEN) {
         openaiWs.send(
           JSON.stringify({
             type: "input_audio_buffer.append",
@@ -266,8 +328,8 @@ wsServer.on("connection", async (twilioWs, req) => {
       }
 
       if (data.event === "stop") {
-        console.log("📴 Call beendet");
-        saveCallLog();
+        console.log("📴 Twilio Stream beendet");
+        await saveCallLog();
       }
     } catch (err) {
       console.error("Fehler in Twilio-Stream:", err.message);
@@ -285,6 +347,8 @@ wsServer.on("connection", async (twilioWs, req) => {
     const fullTranscript = transcript
       .map((t) => `${t.role === "user" ? "Anrufer" : "Assistent"}: ${t.text}`)
       .join("\n");
+
+    console.log(`💾 Speichere Call-Log: ${callDuration}s, ${transcript.length} Nachrichten`);
 
     // Detect flags from transcript
     const transcriptLower = fullTranscript.toLowerCase();
@@ -304,31 +368,33 @@ wsServer.on("connection", async (twilioWs, req) => {
 
     // Generate AI summary
     let aiSummary = "";
-    try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content:
-                "Fasse das folgende Telefongespräch in 2-3 Sätzen zusammen. Nenne das Anliegen und wichtige Details.",
-            },
-            { role: "user", content: fullTranscript },
-          ],
-          max_tokens: 150,
-        }),
-      });
+    if (fullTranscript.length > 10) {
+      try {
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content:
+                  "Fasse das folgende Telefongespräch in 2-3 Sätzen zusammen. Nenne das Anliegen und wichtige Details.",
+              },
+              { role: "user", content: fullTranscript },
+            ],
+            max_tokens: 150,
+          }),
+        });
 
-      const result = await response.json();
-      aiSummary = result.choices?.[0]?.message?.content || "";
-    } catch (err) {
-      console.error("Fehler bei Summary:", err.message);
+        const result = await response.json();
+        aiSummary = result.choices?.[0]?.message?.content || "";
+      } catch (err) {
+        console.error("Fehler bei Summary:", err.message);
+      }
     }
 
     try {
@@ -350,15 +416,11 @@ wsServer.on("connection", async (twilioWs, req) => {
 
   twilioWs.on("close", () => {
     console.log("📴 Twilio Verbindung beendet");
-    openaiWs.close();
-  });
-
-  openaiWs.on("error", (err) => {
-    console.error("OpenAI WebSocket Fehler:", err.message);
+    if (openaiWs) openaiWs.close();
   });
 
   twilioWs.on("error", (err) => {
-    console.error("Twilio WebSocket Fehler:", err.message);
+    console.error("❌ Twilio WebSocket Fehler:", err.message);
   });
 });
 
