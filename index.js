@@ -88,7 +88,7 @@ wsServer.on("connection", async (twilioWs, req) => {
 
     if (!bizId) {
       console.log("ℹ️ Keine Business-ID, verwende Standard-Prompt");
-      prompt += `\n\nBegrüße den Anrufer freundlich und frage wie du helfen kannst.`;
+      prompt += `\n\nBegrüße den Anrufer freundlich als Anrufassistent der Firma Müller aus Walldorf und frage wie du helfen kannst.`;
     } else {
       try {
         const { data: business } = await supabase
@@ -456,3 +456,4 @@ server.on("upgrade", (request, socket, head) => {
     socket.destroy();
   }
 });
+
