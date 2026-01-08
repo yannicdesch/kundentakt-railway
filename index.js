@@ -79,72 +79,73 @@ wsServer.on("connection", async (twilioWs, req) => {
   let openaiWs = null;
   let sessionConfigured = false;
   let streamSid = "";
+  let openaiReady = false;
+  let twilioStarted = false;
 
   // Build system prompt from business data
   const buildSystemPrompt = async (bizId, bizName) => {
     let prompt = `Du bist der freundliche Telefonassistent von ${bizName}. Sprich Deutsch und sei hilfsbereit.`;
 
-    if (!bizId) return prompt;
+    if (!bizId) {
+      console.log("ℹ️ Keine Business-ID, verwende Standard-Prompt");
+      prompt += `\n\nBegrüße den Anrufer freundlich und frage wie du helfen kannst.`;
+    } else {
+      try {
+        const { data: business } = await supabase
+          .from("businesses")
+          .select("custom_greeting, category, opening_hours")
+          .eq("id", bizId)
+          .single();
 
-    try {
-      // Fetch business details
-      const { data: business } = await supabase
-        .from("businesses")
-        .select("custom_greeting, category, opening_hours")
-        .eq("id", bizId)
-        .single();
-
-      if (business?.custom_greeting) {
-        prompt = business.custom_greeting;
-      }
-
-      // Fetch FAQs
-      const { data: faqs } = await supabase
-        .from("faqs")
-        .select("question, answer")
-        .eq("business_id", bizId)
-        .limit(10);
-
-      if (faqs?.length > 0) {
-        prompt += "\n\nHäufige Fragen und Antworten:";
-        faqs.forEach((faq) => {
-          prompt += `\n- Frage: ${faq.question}\n  Antwort: ${faq.answer}`;
-        });
-      }
-
-      // Fetch services
-      const { data: services } = await supabase
-        .from("service_catalog")
-        .select("service_name, description, price_range")
-        .eq("business_id", bizId)
-        .limit(10);
-
-      if (services?.length > 0) {
-        prompt += "\n\nAngebotene Dienstleistungen:";
-        services.forEach((s) => {
-          prompt += `\n- ${s.service_name}`;
-          if (s.description) prompt += `: ${s.description}`;
-          if (s.price_range) prompt += ` (${s.price_range})`;
-        });
-      }
-
-      // Fetch call script
-      const { data: script } = await supabase
-        .from("call_scripts")
-        .select("greeting_text, fallback_message, tone")
-        .eq("business_id", bizId)
-        .single();
-
-      if (script) {
-        if (script.greeting_text) {
-          prompt += `\n\nBegrüßung: ${script.greeting_text}`;
+        if (business?.custom_greeting) {
+          prompt = business.custom_greeting;
         }
-        if (script.tone) {
-          prompt += `\nTonalität: ${script.tone}`;
+
+        const { data: faqs } = await supabase
+          .from("faqs")
+          .select("question, answer")
+          .eq("business_id", bizId)
+          .limit(10);
+
+        if (faqs?.length > 0) {
+          prompt += "\n\nHäufige Fragen und Antworten:";
+          faqs.forEach((faq) => {
+            prompt += `\n- Frage: ${faq.question}\n  Antwort: ${faq.answer}`;
+          });
         }
+
+        const { data: services } = await supabase
+          .from("service_catalog")
+          .select("service_name, description, price_range")
+          .eq("business_id", bizId)
+          .limit(10);
+
+        if (services?.length > 0) {
+          prompt += "\n\nAngebotene Dienstleistungen:";
+          services.forEach((s) => {
+            prompt += `\n- ${s.service_name}`;
+            if (s.description) prompt += `: ${s.description}`;
+            if (s.price_range) prompt += ` (${s.price_range})`;
+          });
+        }
+
+        const { data: script } = await supabase
+          .from("call_scripts")
+          .select("greeting_text, fallback_message, tone")
+          .eq("business_id", bizId)
+          .single();
+
+        if (script) {
+          if (script.greeting_text) {
+            prompt += `\n\nBegrüßung: ${script.greeting_text}`;
+          }
+          if (script.tone) {
+            prompt += `\nTonalität: ${script.tone}`;
+          }
+        }
+      } catch (err) {
+        console.error("Fehler beim Laden der Business-Daten:", err.message);
       }
-    } catch (err) {
-      console.error("Fehler beim Laden der Business-Daten:", err.message);
     }
 
     prompt += `\n\nWichtige Regeln:
@@ -153,45 +154,61 @@ wsServer.on("connection", async (twilioWs, req) => {
 - Frage nach, ob ein Rückruf gewünscht wird
 - Sei freundlich und professionell
 - Halte die Antworten kurz und prägnant
-- Beginne das Gespräch mit einer freundlichen Begrüßung`;
+- Beginne das Gespräch sofort mit einer freundlichen Begrüßung`;
 
     return prompt;
   };
 
-  // Configure OpenAI session after we have business data
-  const configureOpenAISession = async () => {
-    if (sessionConfigured || !openaiWs || openaiWs.readyState !== WebSocket.OPEN) {
+  // Try to configure and start - only runs when BOTH are ready
+  const tryConfigureAndStart = async () => {
+    if (sessionConfigured) {
+      console.log("⏭️ Session bereits konfiguriert");
       return;
     }
-    sessionConfigured = true;
+    
+    if (!openaiReady) {
+      console.log("⏳ Warte auf OpenAI Verbindung...");
+      return;
+    }
+    
+    if (!twilioStarted) {
+      console.log("⏳ Warte auf Twilio Start...");
+      return;
+    }
 
-    console.log(`🔧 Konfiguriere OpenAI Session für: ${businessName} (${businessId})`);
+    if (!openaiWs || openaiWs.readyState !== WebSocket.OPEN) {
+      console.log("⚠️ OpenAI WebSocket nicht offen");
+      return;
+    }
+
+    sessionConfigured = true;
+    console.log(`🔧 Konfiguriere OpenAI Session für: ${businessName} (${businessId || 'kein Business'})`);
 
     const systemPrompt = await buildSystemPrompt(businessId, businessName);
     console.log("📝 System Prompt erstellt, Länge:", systemPrompt.length);
 
     // Configure session
-    openaiWs.send(
-      JSON.stringify({
-        type: "session.update",
-        session: {
-          modalities: ["text", "audio"],
-          instructions: systemPrompt,
-          voice: "alloy",
-          input_audio_format: "g711_ulaw",
-          output_audio_format: "g711_ulaw",
-          input_audio_transcription: {
-            model: "whisper-1",
-          },
-          turn_detection: {
-            type: "server_vad",
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 500,
-          },
+    const sessionConfig = {
+      type: "session.update",
+      session: {
+        modalities: ["text", "audio"],
+        instructions: systemPrompt,
+        voice: "alloy",
+        input_audio_format: "g711_ulaw",
+        output_audio_format: "g711_ulaw",
+        input_audio_transcription: {
+          model: "whisper-1",
         },
-      })
-    );
+        turn_detection: {
+          type: "server_vad",
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 500,
+        },
+      },
+    };
+    
+    openaiWs.send(JSON.stringify(sessionConfig));
     console.log("✅ Session.update gesendet");
   };
 
@@ -203,97 +220,98 @@ wsServer.on("connection", async (twilioWs, req) => {
     }
 
     console.log("🎤 Triggere AI Begrüßung...");
-    openaiWs.send(
-      JSON.stringify({
-        type: "response.create",
-        response: {
-          modalities: ["audio", "text"],
-        },
-      })
-    );
+    const greetingRequest = {
+      type: "response.create",
+      response: {
+        modalities: ["audio", "text"],
+      },
+    };
+    openaiWs.send(JSON.stringify(greetingRequest));
+    console.log("✅ Greeting Request gesendet");
   };
 
   // Connect to OpenAI Realtime API
-  const connectToOpenAI = () => {
-    console.log("🔌 Verbinde mit OpenAI Realtime API...");
-    
-    openaiWs = new WebSocket(
-      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "OpenAI-Beta": "realtime=v1",
-        },
+  console.log("🔌 Verbinde mit OpenAI Realtime API...");
+  
+  openaiWs = new WebSocket(
+    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "OpenAI-Beta": "realtime=v1",
+      },
+    }
+  );
+
+  openaiWs.on("open", () => {
+    console.log("🧠 Verbunden mit OpenAI Realtime API");
+  });
+
+  openaiWs.on("message", async (msg) => {
+    try {
+      const data = JSON.parse(msg.toString());
+
+      if (data.type === "session.created") {
+        console.log("📝 OpenAI Session erstellt");
+        openaiReady = true;
+        // Try to configure now that OpenAI is ready
+        await tryConfigureAndStart();
       }
-    );
 
-    openaiWs.on("open", () => {
-      console.log("🧠 Verbunden mit OpenAI Realtime");
-    });
-
-    openaiWs.on("message", async (msg) => {
-      try {
-        const data = JSON.parse(msg.toString());
-
-        if (data.type === "session.created") {
-          console.log("📝 OpenAI Session erstellt, warte auf Twilio Start...");
-          // Don't configure yet - wait for Twilio start event with business data
-        }
-
-        if (data.type === "session.updated") {
-          console.log("✅ OpenAI Session konfiguriert, triggere Begrüßung...");
-          // Now trigger the greeting after session is configured
-          setTimeout(triggerGreeting, 300);
-        }
-
-        if (data.type === "error") {
-          console.error("❌ OpenAI Fehler:", JSON.stringify(data.error));
-        }
-
-        // Collect transcript
-        if (data.type === "conversation.item.input_audio_transcription.completed") {
-          console.log("👤 User:", data.transcript);
-          transcript.push({ role: "user", text: data.transcript });
-        }
-
-        if (data.type === "response.audio_transcript.done") {
-          console.log("🤖 Assistant:", data.transcript);
-          transcript.push({ role: "assistant", text: data.transcript });
-        }
-
-        // Send audio to Twilio
-        if (data.type === "response.audio.delta" && data.delta) {
-          if (twilioWs.readyState === WebSocket.OPEN && streamSid) {
-            twilioWs.send(
-              JSON.stringify({
-                event: "media",
-                streamSid: streamSid,
-                media: { payload: data.delta },
-              })
-            );
-          }
-        }
-
-        if (data.type === "response.audio.done") {
-          console.log("🔊 Audio Response abgeschlossen");
-        }
-
-      } catch (err) {
-        console.error("Fehler bei OpenAI-Antwort:", err.message);
+      if (data.type === "session.updated") {
+        console.log("✅ OpenAI Session konfiguriert erfolgreich");
+        // Trigger greeting after session is configured
+        setTimeout(triggerGreeting, 500);
       }
-    });
 
-    openaiWs.on("error", (err) => {
-      console.error("❌ OpenAI WebSocket Fehler:", err.message);
-    });
+      if (data.type === "error") {
+        console.error("❌ OpenAI Fehler:", JSON.stringify(data.error));
+      }
 
-    openaiWs.on("close", () => {
-      console.log("🔌 OpenAI Verbindung geschlossen");
-    });
-  };
+      // Collect transcript
+      if (data.type === "conversation.item.input_audio_transcription.completed") {
+        console.log("👤 User:", data.transcript);
+        transcript.push({ role: "user", text: data.transcript });
+      }
 
-  // Start OpenAI connection immediately
-  connectToOpenAI();
+      if (data.type === "response.audio_transcript.done") {
+        console.log("🤖 Assistant:", data.transcript);
+        transcript.push({ role: "assistant", text: data.transcript });
+      }
+
+      // Send audio to Twilio
+      if (data.type === "response.audio.delta" && data.delta) {
+        if (twilioWs.readyState === WebSocket.OPEN && streamSid) {
+          twilioWs.send(
+            JSON.stringify({
+              event: "media",
+              streamSid: streamSid,
+              media: { payload: data.delta },
+            })
+          );
+        }
+      }
+
+      if (data.type === "response.audio.done") {
+        console.log("🔊 Audio Response abgeschlossen");
+      }
+
+      if (data.type === "response.done") {
+        console.log("✅ Response komplett abgeschlossen");
+      }
+
+    } catch (err) {
+      console.error("Fehler bei OpenAI-Antwort:", err.message);
+    }
+  });
+
+  openaiWs.on("error", (err) => {
+    console.error("❌ OpenAI WebSocket Fehler:", err.message);
+  });
+
+  openaiWs.on("close", (code, reason) => {
+    console.log(`🔌 OpenAI Verbindung geschlossen: ${code} - ${reason}`);
+  });
 
   // Audio from Twilio
   twilioWs.on("message", async (msg) => {
@@ -308,17 +326,18 @@ wsServer.on("connection", async (twilioWs, req) => {
         businessName = params.businessName || "Kundentakt";
         streamSid = data.start.streamSid || "";
         callStartTime = Date.now();
+        twilioStarted = true;
         
         console.log(`📋 Twilio Stream gestartet:`);
-        console.log(`   - Business: ${businessName} (${businessId})`);
+        console.log(`   - Business: ${businessName} (${businessId || 'kein Match'})`);
         console.log(`   - Caller: ${callerNumber}`);
         console.log(`   - StreamSid: ${streamSid}`);
 
-        // NOW configure OpenAI with the business data
-        await configureOpenAISession();
+        // Try to configure now that Twilio is ready
+        await tryConfigureAndStart();
       }
 
-      if (data.event === "media" && openaiWs && openaiWs.readyState === WebSocket.OPEN) {
+      if (data.event === "media" && openaiWs && openaiWs.readyState === WebSocket.OPEN && sessionConfigured) {
         openaiWs.send(
           JSON.stringify({
             type: "input_audio_buffer.append",
@@ -338,17 +357,17 @@ wsServer.on("connection", async (twilioWs, req) => {
 
   // Save call log to Supabase
   const saveCallLog = async () => {
-    if (!businessId) {
-      console.log("⚠️ Keine Business-ID, überspringe Speicherung");
-      return;
-    }
-
     const callDuration = Math.round((Date.now() - callStartTime) / 1000);
     const fullTranscript = transcript
       .map((t) => `${t.role === "user" ? "Anrufer" : "Assistent"}: ${t.text}`)
       .join("\n");
 
-    console.log(`💾 Speichere Call-Log: ${callDuration}s, ${transcript.length} Nachrichten`);
+    console.log(`💾 Call beendet: ${callDuration}s, ${transcript.length} Nachrichten`);
+
+    if (!businessId) {
+      console.log("⚠️ Keine Business-ID, überspringe DB-Speicherung");
+      return;
+    }
 
     // Detect flags from transcript
     const transcriptLower = fullTranscript.toLowerCase();
@@ -408,7 +427,7 @@ wsServer.on("connection", async (twilioWs, req) => {
         needs_callback: needsCallback,
         is_quote_request: isQuoteRequest,
       });
-      console.log("✅ Call-Log gespeichert");
+      console.log("✅ Call-Log gespeichert in Datenbank");
     } catch (err) {
       console.error("Fehler beim Speichern:", err.message);
     }
