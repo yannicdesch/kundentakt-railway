@@ -16,6 +16,10 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
+// Log config at startup
+console.log("🔧 Supabase URL:", process.env.SUPABASE_URL ? process.env.SUPABASE_URL.substring(0, 30) + "..." : "NICHT GESETZT!");
+console.log("🔧 Supabase Key:", process.env.SUPABASE_SERVICE_KEY ? "gesetzt (" + process.env.SUPABASE_SERVICE_KEY.length + " Zeichen)" : "NICHT GESETZT!");
+
 // Health check
 app.get("/", (req, res) => {
   res.json({ status: "ok", service: "kundentakt-voice-agent" });
@@ -73,6 +77,10 @@ app.post("/twilio/incoming", async (req, res) => {
         .select("id, business_name")
         .eq("phone_number_assigned", numFormat)
         .maybeSingle();
+      
+      if (error) {
+        console.error(`❌ Supabase Fehler bei Abfrage:`, error.message, error.code);
+      }
       
       if (data) {
         business = data;
