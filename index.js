@@ -28,45 +28,78 @@ app.post("/twilio/incoming", async (req, res) => {
   const callSid = req.body.CallSid || "";
 
   console.log(`📞 Eingehender Anruf von ${callerNumber} an ${toNumber}`);
+  console.log(`📞 Raw request body:`, JSON.stringify(req.body));
 
   // Look up business by phone number - try multiple formats
   let businessId = "";
   let businessName = "Kundentakt";
 
   try {
-    // Normalize the phone number - remove spaces and ensure + prefix
-    const normalizedNumber = toNumber.replace(/\s/g, '');
+    // Normalize the phone number - remove all non-digit characters except +
+    let normalizedNumber = toNumber.replace(/[\s\-\(\)]/g, '');
     console.log(`🔍 Suche Business für Nummer: ${normalizedNumber}`);
     
-    // First try exact match
-    let { data: business, error } = await supabase
-      .from("businesses")
-      .select("id, business_name")
-      .eq("phone_number_assigned", normalizedNumber)
-      .maybeSingle();
-
-    // If not found, try without + prefix
-    if (!business && normalizedNumber.startsWith('+')) {
-      const withoutPlus = normalizedNumber.substring(1);
-      console.log(`🔍 Versuche ohne +: ${withoutPlus}`);
-      const result = await supabase
-        .from("businesses")
-        .select("id, business_name")
-        .eq("phone_number_assigned", withoutPlus)
-        .maybeSingle();
-      business = result.data;
+    // Build all possible number formats to try
+    const numbersToTry = [normalizedNumber];
+    
+    // Without + prefix
+    if (normalizedNumber.startsWith('+')) {
+      numbersToTry.push(normalizedNumber.substring(1));
     }
-
-    // If still not found, try with + prefix added
-    if (!business && !normalizedNumber.startsWith('+')) {
-      const withPlus = '+' + normalizedNumber;
-      console.log(`🔍 Versuche mit +: ${withPlus}`);
-      const result = await supabase
+    
+    // With + prefix
+    if (!normalizedNumber.startsWith('+')) {
+      numbersToTry.push('+' + normalizedNumber);
+    }
+    
+    // Handle 0049 format (convert to +49)
+    if (normalizedNumber.startsWith('0049')) {
+      numbersToTry.push('+49' + normalizedNumber.substring(4));
+    }
+    
+    // Handle 00 prefix format (convert to +)
+    if (normalizedNumber.startsWith('00')) {
+      numbersToTry.push('+' + normalizedNumber.substring(2));
+    }
+    
+    console.log(`🔍 Versuche Formate:`, numbersToTry);
+    
+    let business = null;
+    
+    for (const numFormat of numbersToTry) {
+      console.log(`🔍 Prüfe: ${numFormat}`);
+      const { data, error } = await supabase
         .from("businesses")
         .select("id, business_name")
-        .eq("phone_number_assigned", withPlus)
+        .eq("phone_number_assigned", numFormat)
         .maybeSingle();
-      business = result.data;
+      
+      if (data) {
+        business = data;
+        console.log(`✅ Match gefunden mit Format: ${numFormat}`);
+        break;
+      }
+    }
+    
+    // Last resort: LIKE query for partial match
+    if (!business) {
+      console.log(`🔍 Versuche LIKE-Suche...`);
+      // Extract last 10 digits
+      const digitsOnly = normalizedNumber.replace(/\D/g, '');
+      const lastDigits = digitsOnly.slice(-10);
+      console.log(`🔍 Suche nach letzten 10 Ziffern: ${lastDigits}`);
+      
+      const { data } = await supabase
+        .from("businesses")
+        .select("id, business_name, phone_number_assigned")
+        .like("phone_number_assigned", `%${lastDigits}`);
+      
+      if (data && data.length === 1) {
+        business = data[0];
+        console.log(`✅ LIKE-Match gefunden: ${business.phone_number_assigned}`);
+      } else if (data && data.length > 1) {
+        console.log(`⚠️ Mehrere LIKE-Matches gefunden:`, data.map(b => b.phone_number_assigned));
+      }
     }
 
     if (business) {
@@ -74,7 +107,14 @@ app.post("/twilio/incoming", async (req, res) => {
       businessName = business.business_name;
       console.log(`✅ Business gefunden: ${businessName} (${businessId})`);
     } else {
-      console.log(`⚠️ Kein Business gefunden für Nummer: ${normalizedNumber}`);
+      // Log all businesses for debugging
+      const { data: allBiz } = await supabase
+        .from("businesses")
+        .select("business_name, phone_number_assigned")
+        .neq("phone_number_assigned", "pending")
+        .limit(10);
+      console.log(`⚠️ Kein Business gefunden für: ${normalizedNumber}`);
+      console.log(`📋 Vorhandene Nummern:`, allBiz?.map(b => `${b.business_name}: ${b.phone_number_assigned}`));
     }
   } catch (err) {
     console.error("❌ Fehler beim Business-Lookup:", err.message);
