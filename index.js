@@ -29,23 +29,55 @@ app.post("/twilio/incoming", async (req, res) => {
 
   console.log(`📞 Eingehender Anruf von ${callerNumber} an ${toNumber}`);
 
-  // Look up business by phone number
+  // Look up business by phone number - try multiple formats
   let businessId = "";
   let businessName = "Kundentakt";
 
   try {
-    const { data: business } = await supabase
+    // Normalize the phone number - remove spaces and ensure + prefix
+    const normalizedNumber = toNumber.replace(/\s/g, '');
+    console.log(`🔍 Suche Business für Nummer: ${normalizedNumber}`);
+    
+    // First try exact match
+    let { data: business, error } = await supabase
       .from("businesses")
       .select("id, business_name")
-      .eq("phone_number_assigned", toNumber)
-      .single();
+      .eq("phone_number_assigned", normalizedNumber)
+      .maybeSingle();
+
+    // If not found, try without + prefix
+    if (!business && normalizedNumber.startsWith('+')) {
+      const withoutPlus = normalizedNumber.substring(1);
+      console.log(`🔍 Versuche ohne +: ${withoutPlus}`);
+      const result = await supabase
+        .from("businesses")
+        .select("id, business_name")
+        .eq("phone_number_assigned", withoutPlus)
+        .maybeSingle();
+      business = result.data;
+    }
+
+    // If still not found, try with + prefix added
+    if (!business && !normalizedNumber.startsWith('+')) {
+      const withPlus = '+' + normalizedNumber;
+      console.log(`🔍 Versuche mit +: ${withPlus}`);
+      const result = await supabase
+        .from("businesses")
+        .select("id, business_name")
+        .eq("phone_number_assigned", withPlus)
+        .maybeSingle();
+      business = result.data;
+    }
 
     if (business) {
       businessId = business.id;
       businessName = business.business_name;
+      console.log(`✅ Business gefunden: ${businessName} (${businessId})`);
+    } else {
+      console.log(`⚠️ Kein Business gefunden für Nummer: ${normalizedNumber}`);
     }
   } catch (err) {
-    console.error("Fehler beim Business-Lookup:", err.message);
+    console.error("❌ Fehler beim Business-Lookup:", err.message);
   }
 
   const response = `
@@ -84,63 +116,160 @@ wsServer.on("connection", async (twilioWs, req) => {
 
   // Build system prompt from business data
   const buildSystemPrompt = async (bizId, bizName) => {
-    let prompt = `Du bist der freundliche Telefonassistent von ${bizName}. Sprich Deutsch und sei hilfsbereit.`;
+    // WICHTIG: Business-Name immer in der Basis-Identität verwenden
+    let baseIdentity = `Du bist der freundliche Telefonassistent von ${bizName}. Sprich Deutsch und sei hilfsbereit.`;
+    let businessInfoSection = "";
+    let openingHoursSection = "";
+    let availabilitySection = "";
+    let faqSection = "";
+    let servicesSection = "";
+    let scriptSection = "";
 
     if (!bizId) {
       console.log("ℹ️ Keine Business-ID, verwende Standard-Prompt");
-      prompt += `\n\nBegrüße den Anrufer freundlich und frage wie du helfen kannst.`;
+      businessInfoSection = `\n\nBegrüße den Anrufer freundlich mit "Guten Tag, Sie sprechen mit dem Telefonassistenten von ${bizName}. Wie kann ich Ihnen helfen?"`;
     } else {
       try {
+        // Lade ALLE Business-Daten
         const { data: business } = await supabase
           .from("businesses")
-          .select("custom_greeting, category, opening_hours")
+          .select("custom_greeting, category, opening_hours, availability_mode, availability_hours, voice_preference, address, forwarding_number")
           .eq("id", bizId)
           .single();
 
-        if (business?.custom_greeting) {
-          prompt = business.custom_greeting;
+        if (business) {
+          // Custom greeting oder Standard
+          if (business.custom_greeting) {
+            businessInfoSection = `\n\nDeine personalisierte Begrüßung: "${business.custom_greeting}" - erwähne dabei immer den Firmennamen ${bizName}.`;
+          } else {
+            businessInfoSection = `\n\nBegrüße den Anrufer mit "Guten Tag, Sie sprechen mit dem Telefonassistenten von ${bizName}. Wie kann ich Ihnen helfen?"`;
+          }
+
+          // Branche
+          if (business.category) {
+            const categoryLabels = {
+              'shk': 'SHK (Sanitär, Heizung, Klima)',
+              'elektro': 'Elektro',
+              'dachdecker': 'Dachdecker',
+              'gebaeudeservice': 'Gebäudeservice',
+              'rohrreinigung': 'Rohrreinigung',
+              'sonstiges': 'Sonstiges Handwerk'
+            };
+            businessInfoSection += `\n\nBranche: ${categoryLabels[business.category] || business.category}`;
+          }
+
+          // Adresse
+          if (business.address) {
+            businessInfoSection += `\nFirmenadresse: ${business.address}`;
+          }
+
+          // Weiterleitungsnummer (für Infos an Anrufer)
+          if (business.forwarding_number) {
+            businessInfoSection += `\nRückrufnummer: ${business.forwarding_number}`;
+          }
+
+          // Öffnungszeiten
+          if (business.opening_hours && typeof business.opening_hours === 'object') {
+            const hours = business.opening_hours;
+            const dayLabels = {
+              monday: 'Montag', tuesday: 'Dienstag', wednesday: 'Mittwoch',
+              thursday: 'Donnerstag', friday: 'Freitag', saturday: 'Samstag', sunday: 'Sonntag'
+            };
+            
+            openingHoursSection = "\n\nÖffnungszeiten des Betriebs:";
+            for (const [day, data] of Object.entries(hours)) {
+              if (dayLabels[day] && data && typeof data === 'object') {
+                if (data.active && data.from && data.to) {
+                  openingHoursSection += `\n- ${dayLabels[day]}: ${data.from} - ${data.to} Uhr`;
+                } else if (data.active === false) {
+                  openingHoursSection += `\n- ${dayLabels[day]}: Geschlossen`;
+                }
+              }
+            }
+          }
+
+          // Erreichbarkeitszeiten (wann der Agent aktiv sein soll)
+          if (business.availability_mode) {
+            const modeLabels = {
+              'always': 'Der Telefonassistent ist rund um die Uhr erreichbar.',
+              'scheduled': 'Der Telefonassistent ist nur zu bestimmten Zeiten aktiv.',
+              'fallback': 'Der Telefonassistent springt ein, wenn der Betrieb nicht selbst abheben kann.'
+            };
+            availabilitySection = `\n\nErreichbarkeit: ${modeLabels[business.availability_mode] || business.availability_mode}`;
+            
+            // Bei geplanten Zeiten auch den Wochenplan zeigen
+            if (business.availability_mode === 'scheduled' && business.availability_hours) {
+              const schedule = business.availability_hours;
+              const dayLabels = {
+                monday: 'Mo', tuesday: 'Di', wednesday: 'Mi',
+                thursday: 'Do', friday: 'Fr', saturday: 'Sa', sunday: 'So'
+              };
+              
+              let activedays = [];
+              for (const [day, data] of Object.entries(schedule)) {
+                if (dayLabels[day] && data && data.active) {
+                  activedays.push(`${dayLabels[day]} ${data.from}-${data.to}`);
+                }
+              }
+              if (activedays.length > 0) {
+                availabilitySection += ` Aktiv: ${activedays.join(', ')}`;
+              }
+            }
+          }
         }
 
+        // FAQs laden
         const { data: faqs } = await supabase
           .from("faqs")
           .select("question, answer")
           .eq("business_id", bizId)
-          .limit(10);
+          .limit(15);
 
         if (faqs?.length > 0) {
-          prompt += "\n\nHäufige Fragen und Antworten:";
+          faqSection = "\n\nHäufig gestellte Fragen und Antworten (nutze diese bei passenden Fragen):";
           faqs.forEach((faq) => {
-            prompt += `\n- Frage: ${faq.question}\n  Antwort: ${faq.answer}`;
+            faqSection += `\n- Frage: ${faq.question}\n  Antwort: ${faq.answer}`;
           });
         }
 
+        // Services laden
         const { data: services } = await supabase
           .from("service_catalog")
-          .select("service_name, description, price_range")
+          .select("service_name, description, price_range, typical_duration, is_emergency_service")
           .eq("business_id", bizId)
-          .limit(10);
+          .limit(15);
 
         if (services?.length > 0) {
-          prompt += "\n\nAngebotene Dienstleistungen:";
+          servicesSection = "\n\nAngebotene Dienstleistungen:";
           services.forEach((s) => {
-            prompt += `\n- ${s.service_name}`;
-            if (s.description) prompt += `: ${s.description}`;
-            if (s.price_range) prompt += ` (${s.price_range})`;
+            servicesSection += `\n- ${s.service_name}`;
+            if (s.description) servicesSection += `: ${s.description}`;
+            if (s.price_range) servicesSection += ` (Preis: ${s.price_range})`;
+            if (s.typical_duration) servicesSection += ` [Dauer: ${s.typical_duration}]`;
+            if (s.is_emergency_service) servicesSection += ` ⚡ NOTDIENST`;
           });
         }
 
+        // Call Script laden
         const { data: script } = await supabase
           .from("call_scripts")
-          .select("greeting_text, fallback_message, tone")
+          .select("greeting_text, fallback_message, tone, booking_link")
           .eq("business_id", bizId)
-          .single();
+          .maybeSingle();
 
         if (script) {
           if (script.greeting_text) {
-            prompt += `\n\nBegrüßung: ${script.greeting_text}`;
+            const personalizedGreeting = script.greeting_text.replace(/Telefonassistenten(?! von)/g, `Telefonassistenten von ${bizName}`);
+            scriptSection += `\n\nEmpfohlener Begrüßungstext: ${personalizedGreeting}`;
           }
           if (script.tone) {
-            prompt += `\nTonalität: ${script.tone}`;
+            scriptSection += `\nTonalität: ${script.tone}`;
+          }
+          if (script.fallback_message) {
+            scriptSection += `\nWenn du nicht weiterhelfen kannst, sage: "${script.fallback_message}"`;
+          }
+          if (script.booking_link) {
+            scriptSection += `\nTerminbuchung online möglich unter: ${script.booking_link}`;
           }
         }
       } catch (err) {
@@ -148,14 +277,20 @@ wsServer.on("connection", async (twilioWs, req) => {
       }
     }
 
-    prompt += `\n\nWichtige Regeln:
-- Erfasse Name, Telefonnummer und Anliegen des Anrufers
-- Bei Notfällen (Wasserrohrbruch, Stromausfall, etc.) markiere dies als dringend
-- Frage nach, ob ein Rückruf gewünscht wird
-- Sei freundlich und professionell
-- Halte die Antworten kurz und prägnant
-- Beginne das Gespräch sofort mit einer freundlichen Begrüßung`;
+    // Zusammengebautes Prompt - alle Daten kombinieren
+    let prompt = baseIdentity + businessInfoSection + openingHoursSection + availabilitySection + faqSection + servicesSection + scriptSection;
 
+    prompt += `\n\nWichtige Verhaltensregeln:
+- Du arbeitest für ${bizName} - erwähne den Firmennamen in der Begrüßung!
+- Erfasse immer: Name, Telefonnummer und Anliegen des Anrufers
+- Bei Notfällen (Wasserrohrbruch, Stromausfall, Heizungsausfall etc.) markiere dies als DRINGEND
+- Frage nach, ob ein Rückruf gewünscht wird
+- Nenne bei Fragen nach Öffnungszeiten die hinterlegten Zeiten
+- Wenn nach Preisen gefragt wird, nenne die hinterlegten Preisspannen oder verweise auf ein Angebot
+- Sei freundlich, professionell und halte Antworten kurz
+- Beginne das Gespräch sofort mit der Begrüßung`;
+
+    console.log(`📝 System-Prompt für ${bizName} (${bizId?.substring(0, 8) || 'N/A'}) erstellt - ${prompt.length} Zeichen`);
     return prompt;
   };
 
