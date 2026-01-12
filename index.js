@@ -150,18 +150,22 @@ app.post("/twilio/incoming", async (req, res) => {
       }
     }
     
-    // Last resort: LIKE query for partial match
-    if (!business) {
+// Last resort: LIKE query for partial match
+    if (!business && supabase) {
       console.log(`🔍 Versuche LIKE-Suche...`);
       // Extract last 10 digits
       const digitsOnly = normalizedNumber.replace(/\D/g, '');
       const lastDigits = digitsOnly.slice(-10);
       console.log(`🔍 Suche nach letzten 10 Ziffern: ${lastDigits}`);
       
-      const { data } = await supabase
+      const { data, error: likeError } = await supabase
         .from("businesses")
         .select("id, business_name, phone_number_assigned")
         .like("phone_number_assigned", `%${lastDigits}`);
+      
+      if (likeError) {
+        console.error(`❌ LIKE-Suche Fehler:`, likeError.message);
+      }
       
       if (data && data.length === 1) {
         business = data[0];
@@ -176,14 +180,19 @@ app.post("/twilio/incoming", async (req, res) => {
       businessName = business.business_name;
       console.log(`✅ Business gefunden: ${businessName} (${businessId})`);
     } else {
-      // Log all businesses for debugging
-      const { data: allBiz } = await supabase
-        .from("businesses")
-        .select("business_name, phone_number_assigned")
-        .neq("phone_number_assigned", "pending")
-        .limit(10);
-      console.log(`⚠️ Kein Business gefunden für: ${normalizedNumber}`);
-      console.log(`📋 Vorhandene Nummern:`, allBiz?.map(b => `${b.business_name}: ${b.phone_number_assigned}`));
+      // Log all businesses for debugging - nur wenn supabase verfügbar
+      if (supabase) {
+        const { data: allBiz } = await supabase
+          .from("businesses")
+          .select("business_name, phone_number_assigned")
+          .neq("phone_number_assigned", "pending")
+          .limit(10);
+        console.log(`⚠️ Kein Business gefunden für: ${normalizedNumber}`);
+        console.log(`📋 Vorhandene Nummern:`, allBiz?.map(b => `${b.business_name}: ${b.phone_number_assigned}`));
+      } else {
+        console.log(`⚠️ Kein Business gefunden für: ${normalizedNumber}`);
+        console.log(`📋 Vorhandene Nummern: [Supabase nicht verfügbar]`);
+      }
     }
   } catch (err) {
     console.error("❌ Fehler beim Business-Lookup:", err.message);
