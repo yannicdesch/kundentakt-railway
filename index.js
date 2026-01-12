@@ -109,7 +109,7 @@ wsServer.on("connection", async (twilioWs, req) => {
   let openaiReady = false;
   let twilioStarted = false;
 
-  // Build system prompt from business data - HANNE PERSONALITY
+// Build system prompt from business data - HANNE PERSONALITY
   const buildSystemPrompt = async (bizId, bizName) => {
     // Hanne's core personality - experienced, calm, friendly office assistant
     let baseIdentity = `Du bist Hanne, die digitale Anrufassistentin von ${bizName}. 
@@ -125,7 +125,9 @@ SPRECHSTIL:
 - Nutze kurze, klare Sätze - maximal 2 Sätze pro Antwort
 - Verwende natürliche Bestätigungen: "Okay, hab ich notiert.", "Alles klar.", "Verstanden, danke dir."
 - Kleine Füllwörter sind okay: "Also", "Schau mal", "Moment"
-- Antworte zügig und komm auf den Punkt`;
+- Antworte zügig und komm auf den Punkt
+- WICHTIG: Wiederhole dich NIEMALS! Sage jeden Satz nur EINMAL. Wenn du etwas gesagt hast, gehe zum nächsten Punkt weiter.
+- Warte nach deiner Antwort IMMER auf die Reaktion des Anrufers bevor du weitersprichst`;
 
     let businessInfoSection = "";
     let openingHoursSection = "";
@@ -189,7 +191,7 @@ SPRECHSTIL:
               thursday: 'Donnerstag', friday: 'Freitag', saturday: 'Samstag', sunday: 'Sonntag'
             };
             
-            openingHoursSection = "\n\nÖFFNUNGSZEITEN:";
+            openingHoursSection = "\n\nÖFFNUNGSZEITEN (DIESE KANNST DU AUF NACHFRAGE NENNEN):";
             for (const [day, dayData] of Object.entries(hours)) {
               if (dayLabels[day] && dayData && typeof dayData === 'object') {
                 if (dayData.active && dayData.from && dayData.to) {
@@ -199,6 +201,7 @@ SPRECHSTIL:
                 }
               }
             }
+            openingHoursSection += `\n\nWenn jemand nach den Öffnungszeiten fragt, nenne diese Zeiten konkret!`;
           }
 
           // Erreichbarkeitszeiten
@@ -266,12 +269,19 @@ FEEDBACK-PHRASEN (nutze diese natürlich):
 - "Alles klar, ist angekommen."
 - "Verstanden, kümmern wir uns drum."
 
+NAMENSERKENNUNG:
+- Höre genau hin wenn jemand seinen Namen nennt
+- Akzeptiere verschiedene Schreibweisen und frag bei Unsicherheit nach: "Kannst du mir deinen Namen noch einmal buchstabieren?"
+- Übliche Muster: "Mein Name ist...", "Ich bin der/die...", "Hier ist...", "...am Apparat"
+- Bestätige den Namen wenn du ihn verstanden hast: "Okay [Name], ich hab das notiert."
+
 WICHTIGE REGELN:
 - Erfasse: Name, Telefonnummer (falls nicht automatisch erkannt), Anliegen
 - Frage nach, ob ein Rückruf gewünscht wird
 - Bei Preisfragen ohne Info: "Die genauen Kosten hängen vom Aufwand ab. Am besten macht ihr einen Termin zur Begutachtung."
 - KEINE medizinischen, finanziellen oder rechtlichen Ratschläge
 - Sei effizient - komm zum Punkt, keine langen Monologe
+- NIEMALS wiederholen was du gerade gesagt hast
 
 GESPRÄCHSENDE:
 "Super, ich hab alles aufgenommen. Wir melden uns schnellstmöglich bei dir. Tschüss und einen schönen Tag noch!"`;
@@ -302,11 +312,11 @@ GESPRÄCHSENDE:
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: {
           type: "server_vad",
-          threshold: 0.4,
-          prefix_padding_ms: 200,
-          silence_duration_ms: 400,
+          threshold: 0.6,           // Höher = weniger empfindlich, verhindert Unterbrechungen
+          prefix_padding_ms: 400,   // Mehr Puffer am Anfang
+          silence_duration_ms: 800, // Längere Stille bevor Antwort, verhindert Überlappung
         },
-        temperature: 0.7,
+        temperature: 0.6,           // Weniger kreativ = konsistentere Antworten
       },
     };
     
