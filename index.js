@@ -16,7 +16,7 @@ app.use(bodyParser.json());
 
 // Diese Funktion erstellt bei JEDEM Aufruf einen frischen Client
 // um Probleme mit Railway Container-Restarts zu vermeiden
-const getSupabaseClient = () => {
+const getSupabaseClient = async () => {
   // Lies Env-Vars JETZT (nicht beim Modul-Start)
   const url = process.env.SUPABASE_URL;
   let key = process.env.SUPABASE_SERVICE_KEY;
@@ -58,10 +58,6 @@ const getSupabaseClient = () => {
   // DEBUG: Teste erst mit direktem HTTP-Request
   console.log("🔐 Teste Key mit direktem HTTP-Request...");
   
-  // Speichere URL und Key für späteren Zugriff
-  const clientUrl = url;
-  const clientKey = key;
-  
   // Test: Direkter API-Aufruf ohne supabase-js
   try {
     const testResponse = await fetch(`${url}/rest/v1/businesses?limit=1`, {
@@ -87,7 +83,7 @@ const getSupabaseClient = () => {
   }
   
   // Client erstellen
-  const client = createClient(clientUrl, clientKey, {
+  const client = createClient(url, key, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -95,7 +91,7 @@ const getSupabaseClient = () => {
     },
     global: {
       headers: {
-        'apikey': clientKey
+        'apikey': key
       }
     }
   });
@@ -191,7 +187,7 @@ app.post("/twilio/incoming", async (req, res) => {
     let business = null;
     
     // Frischen Supabase Client erstellen (Lazy Initialization)
-    const supabase = getSupabaseClient();
+    const supabase = await getSupabaseClient();
     
     if (!supabase) {
       console.error("❌ Supabase Client konnte nicht erstellt werden - überspringe Business-Lookup");
@@ -316,7 +312,7 @@ wsServer.on("connection", async (twilioWs, req) => {
       businessInfoSection = `\n\nBegrüße den Anrufer freundlich mit "Guten Tag, Sie sprechen mit dem Telefonassistenten von ${bizName}. Wie kann ich Ihnen helfen?"`;
     } else {
       // Frischen Supabase Client erstellen
-      const supabase = getSupabaseClient();
+      const supabase = await getSupabaseClient();
       if (!supabase) {
         console.error("❌ Supabase Client nicht verfügbar für Business-Daten");
         businessInfoSection = `\n\nBegrüße den Anrufer mit "Guten Tag, Sie sprechen mit dem Telefonassistenten von ${bizName}. Wie kann ich Ihnen helfen?"`;
@@ -745,7 +741,7 @@ wsServer.on("connection", async (twilioWs, req) => {
     }
 
     // Frischen Supabase Client erstellen für das Speichern
-    const supabase = getSupabaseClient();
+    const supabase = await getSupabaseClient();
     if (!supabase) {
       console.error("❌ Supabase Client nicht verfügbar - Call-Log konnte nicht gespeichert werden");
       return;
