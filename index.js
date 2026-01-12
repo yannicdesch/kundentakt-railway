@@ -55,8 +55,29 @@ const getSupabaseClient = () => {
     return null;
   }
   
-  // Client erstellen
-  return createClient(url, key);
+  // DEBUG: Log exakt was an createClient übergeben wird
+  console.log("🔐 CreateClient wird aufgerufen mit:");
+  console.log("   URL Länge:", url.length);
+  console.log("   Key Länge:", key.length);
+  console.log("   Key Typ:", typeof key);
+  console.log("   Key erste 30:", key.substring(0, 30));
+  console.log("   Key letzte 20:", key.slice(-20));
+  
+  // Client erstellen mit expliziten Optionen
+  const client = createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false
+    },
+    global: {
+      headers: {
+        'apikey': key
+      }
+    }
+  });
+  
+  return client;
 };
 
 // Startup-Diagnose (einmalig)
