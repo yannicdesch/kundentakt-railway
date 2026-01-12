@@ -296,22 +296,22 @@ GESPRÄCHSENDE:
       session: {
         modalities: ["text", "audio"],
         instructions: systemPrompt,
-        voice: "nova", // Nova: Weiblich, warm, natürlich - perfekt für Hanne
+        voice: "shimmer", // Shimmer: Warm, freundlich - perfekt für Hanne
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: {
           type: "server_vad",
-          threshold: 0.4,           // Etwas sensitiver für schnellere Reaktion
-          prefix_padding_ms: 200,   // Weniger Verzögerung vor Antwort
-          silence_duration_ms: 400, // Schnellere Erkennung dass User fertig ist
+          threshold: 0.4,
+          prefix_padding_ms: 200,
+          silence_duration_ms: 400,
         },
-        temperature: 0.7, // Etwas fokussierter für konsistente Antworten
+        temperature: 0.7,
       },
     };
     
     openaiWs.send(JSON.stringify(sessionConfig));
-    console.log("✅ Hanne Session konfiguriert (Stimme: nova, schnelle Reaktion)");
+    console.log("✅ Hanne Session konfiguriert (Stimme: shimmer)");
   };
 
   // Trigger initial AI greeting
