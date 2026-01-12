@@ -10,21 +10,39 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Supabase Client
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+// Supabase Client - mit Validierung
+const getSupabaseConfig = () => {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_KEY;
+  
+  // Key bereinigen - Whitespace und Zeilenumbrüche entfernen
+  const cleanKey = key ? key.replace(/[\s\n\r]+/g, '') : null;
+  
+  return { url, key: cleanKey };
+};
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+const { url: supabaseUrl, key: supabaseKey } = getSupabaseConfig();
+
+// Validierung vor Client-Erstellung
+if (!supabaseUrl) {
+  console.error("❌ FATAL: SUPABASE_URL ist nicht gesetzt!");
+}
+if (!supabaseKey) {
+  console.error("❌ FATAL: SUPABASE_SERVICE_KEY ist nicht gesetzt!");
+}
 
 // Log config at startup with more details
 console.log("🔧 Supabase URL:", supabaseUrl ? supabaseUrl.substring(0, 40) + "..." : "NICHT GESETZT!");
 console.log("🔧 Supabase Key:", supabaseKey ? `gesetzt (${supabaseKey.length} Zeichen, beginnt mit: ${supabaseKey.substring(0, 20)}...)` : "NICHT GESETZT!");
+console.log("🔧 Supabase Key endet mit:", supabaseKey ? `...${supabaseKey.slice(-10)}` : "N/A");
 
 // Verify key format at startup
 if (supabaseKey) {
   try {
     // JWT keys have 3 parts separated by dots
     const parts = supabaseKey.split('.');
+    console.log("🔧 Key Teile:", parts.length);
+    
     if (parts.length === 3) {
       const payload = JSON.parse(atob(parts[1]));
       console.log("🔧 Key Role:", payload.role || "KEINE ROLLE!");
@@ -33,12 +51,29 @@ if (supabaseKey) {
         console.error("⚠️ WARNUNG: Das ist KEIN service_role Key! Aktuell:", payload.role);
       }
     } else {
-      console.error("⚠️ WARNUNG: Key hat falsches Format (nicht 3 Teile)");
+      console.error("⚠️ WARNUNG: Key hat falsches Format (nicht 3 Teile, sondern", parts.length, ")");
+      console.log("🔧 Key Inhalt (erste 50 Zeichen):", supabaseKey.substring(0, 50));
     }
   } catch (e) {
     console.error("⚠️ WARNUNG: Key konnte nicht dekodiert werden:", e.message);
   }
+} else {
+  console.error("❌ FATAL: Kein Supabase Key verfügbar - Datenbankabfragen werden fehlschlagen!");
 }
+
+// Client erstellen - mit fallback für Tests
+const supabase = supabaseUrl && supabaseKey 
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
+
+// Funktion für sichere DB-Abfragen
+const safeQuery = async (queryFn) => {
+  if (!supabase) {
+    console.error("❌ Supabase Client nicht initialisiert - Key oder URL fehlt!");
+    return { data: null, error: new Error("Supabase Client nicht initialisiert") };
+  }
+  return await queryFn(supabase);
+};
 
 // Health check
 app.get("/", (req, res) => {
@@ -90,22 +125,28 @@ app.post("/twilio/incoming", async (req, res) => {
     
     let business = null;
     
-    for (const numFormat of numbersToTry) {
-      console.log(`🔍 Prüfe: ${numFormat}`);
-      const { data, error } = await supabase
-        .from("businesses")
-        .select("id, business_name")
-        .eq("phone_number_assigned", numFormat)
-        .maybeSingle();
-      
-      if (error) {
-        console.error(`❌ Supabase Fehler bei Abfrage:`, error.message, error.code);
-      }
-      
-      if (data) {
-        business = data;
-        console.log(`✅ Match gefunden mit Format: ${numFormat}`);
-        break;
+    // Prüfen ob Supabase verfügbar ist
+    if (!supabase) {
+      console.error("❌ Supabase Client nicht verfügbar - überspringe Business-Lookup");
+    } else {
+      for (const numFormat of numbersToTry) {
+        console.log(`🔍 Prüfe: ${numFormat}`);
+        const { data, error } = await supabase
+          .from("businesses")
+          .select("id, business_name")
+          .eq("phone_number_assigned", numFormat)
+          .maybeSingle();
+        
+        if (error) {
+          console.error(`❌ Supabase Fehler bei Abfrage:`, error.message, error.code);
+          console.error(`❌ Supabase Details:`, JSON.stringify(error));
+        }
+        
+        if (data) {
+          business = data;
+          console.log(`✅ Match gefunden mit Format: ${numFormat}`);
+          break;
+        }
       }
     }
     
