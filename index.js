@@ -11,14 +11,34 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
 // Supabase Client
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
-// Log config at startup
-console.log("🔧 Supabase URL:", process.env.SUPABASE_URL ? process.env.SUPABASE_URL.substring(0, 30) + "..." : "NICHT GESETZT!");
-console.log("🔧 Supabase Key:", process.env.SUPABASE_SERVICE_KEY ? "gesetzt (" + process.env.SUPABASE_SERVICE_KEY.length + " Zeichen)" : "NICHT GESETZT!");
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Log config at startup with more details
+console.log("🔧 Supabase URL:", supabaseUrl ? supabaseUrl.substring(0, 40) + "..." : "NICHT GESETZT!");
+console.log("🔧 Supabase Key:", supabaseKey ? `gesetzt (${supabaseKey.length} Zeichen, beginnt mit: ${supabaseKey.substring(0, 20)}...)` : "NICHT GESETZT!");
+
+// Verify key format at startup
+if (supabaseKey) {
+  try {
+    // JWT keys have 3 parts separated by dots
+    const parts = supabaseKey.split('.');
+    if (parts.length === 3) {
+      const payload = JSON.parse(atob(parts[1]));
+      console.log("🔧 Key Role:", payload.role || "KEINE ROLLE!");
+      console.log("🔧 Key Project:", payload.ref || "KEIN REF!");
+      if (payload.role !== 'service_role') {
+        console.error("⚠️ WARNUNG: Das ist KEIN service_role Key! Aktuell:", payload.role);
+      }
+    } else {
+      console.error("⚠️ WARNUNG: Key hat falsches Format (nicht 3 Teile)");
+    }
+  } catch (e) {
+    console.error("⚠️ WARNUNG: Key konnte nicht dekodiert werden:", e.message);
+  }
+}
 
 // Health check
 app.get("/", (req, res) => {
