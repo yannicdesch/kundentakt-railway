@@ -10,91 +10,75 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Supabase Client - mit Validierung
-const getSupabaseConfig = () => {
+// ============================================
+// LAZY SUPABASE CLIENT - Wird bei jeder Anfrage neu erstellt
+// ============================================
+
+// Diese Funktion erstellt bei JEDEM Aufruf einen frischen Client
+// um Probleme mit Railway Container-Restarts zu vermeiden
+const getSupabaseClient = () => {
+  // Lies Env-Vars JETZT (nicht beim Modul-Start)
   const url = process.env.SUPABASE_URL;
   let key = process.env.SUPABASE_SERVICE_KEY;
   
-  if (key) {
-    // Aggressive Bereinigung: 
-    // 1. Nur ASCII-Zeichen behalten (entfernt unicode/zero-width chars)
-    // 2. Nur alphanumerische Zeichen, Punkt, Unterstrich, Minus behalten (JWT-sicher)
-    const originalLength = key.length;
-    key = key.replace(/[^\x20-\x7E]/g, ''); // Nur druckbare ASCII
-    key = key.replace(/[\s\n\r\t]+/g, ''); // Whitespace entfernen
-    key = key.trim();
-    
-    if (key.length !== originalLength) {
-      console.log(`⚠️ Key hatte ${originalLength - key.length} unsichtbare Zeichen - wurden entfernt`);
-    }
-    
-    // Validiere JWT-Format
-    if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(key)) {
-      console.error("❌ WARNUNG: Key sieht nicht wie ein gültiges JWT aus!");
-      console.log("🔧 Key Inhalt (hex der ersten 50 Bytes):", Buffer.from(key.substring(0, 50)).toString('hex'));
-    }
+  if (!url || !key) {
+    console.error("❌ Supabase URL oder Key fehlt!");
+    console.error("   URL:", url ? "gesetzt" : "FEHLT");
+    console.error("   Key:", key ? "gesetzt" : "FEHLT");
+    return null;
   }
   
-  return { url, key };
-};
-
-const { url: supabaseUrl, key: supabaseKey } = getSupabaseConfig();
-
-// Debug: Zeige exakte Key-Bytes für Diagnose
-if (supabaseKey) {
-  const keyBytes = Buffer.from(supabaseKey);
-  console.log("🔧 Key Byte-Länge:", keyBytes.length);
-}
-if (!supabaseUrl) {
-  console.error("❌ FATAL: SUPABASE_URL ist nicht gesetzt!");
-}
-if (!supabaseKey) {
-  console.error("❌ FATAL: SUPABASE_SERVICE_KEY ist nicht gesetzt!");
-}
-
-// Log config at startup with more details
-console.log("🔧 Supabase URL:", supabaseUrl ? supabaseUrl.substring(0, 40) + "..." : "NICHT GESETZT!");
-console.log("🔧 Supabase Key:", supabaseKey ? `gesetzt (${supabaseKey.length} Zeichen, beginnt mit: ${supabaseKey.substring(0, 20)}...)` : "NICHT GESETZT!");
-console.log("🔧 Supabase Key endet mit:", supabaseKey ? `...${supabaseKey.slice(-10)}` : "N/A");
-
-// Verify key format at startup
-if (supabaseKey) {
+  // Aggressive Bereinigung des Keys
+  const originalLength = key.length;
+  key = key.replace(/[^\x20-\x7E]/g, ''); // Nur druckbare ASCII
+  key = key.replace(/[\s\n\r\t]+/g, ''); // Whitespace entfernen
+  key = key.trim();
+  
+  if (key.length !== originalLength) {
+    console.log(`⚠️ Key bereinigt: ${originalLength} → ${key.length} Zeichen`);
+  }
+  
+  // Validiere JWT-Format
+  const parts = key.split('.');
+  if (parts.length !== 3) {
+    console.error("❌ Key ist kein gültiges JWT (nicht 3 Teile)!");
+    return null;
+  }
+  
   try {
-    // JWT keys have 3 parts separated by dots
-    const parts = supabaseKey.split('.');
-    console.log("🔧 Key Teile:", parts.length);
-    
-    if (parts.length === 3) {
-      const payload = JSON.parse(atob(parts[1]));
-      console.log("🔧 Key Role:", payload.role || "KEINE ROLLE!");
-      console.log("🔧 Key Project:", payload.ref || "KEIN REF!");
-      if (payload.role !== 'service_role') {
-        console.error("⚠️ WARNUNG: Das ist KEIN service_role Key! Aktuell:", payload.role);
-      }
-    } else {
-      console.error("⚠️ WARNUNG: Key hat falsches Format (nicht 3 Teile, sondern", parts.length, ")");
-      console.log("🔧 Key Inhalt (erste 50 Zeichen):", supabaseKey.substring(0, 50));
+    const payload = JSON.parse(atob(parts[1]));
+    if (payload.role !== 'service_role') {
+      console.warn("⚠️ Key ist kein service_role Key:", payload.role);
     }
   } catch (e) {
-    console.error("⚠️ WARNUNG: Key konnte nicht dekodiert werden:", e.message);
+    console.error("❌ Key konnte nicht dekodiert werden:", e.message);
+    return null;
   }
-} else {
-  console.error("❌ FATAL: Kein Supabase Key verfügbar - Datenbankabfragen werden fehlschlagen!");
-}
-
-// Client erstellen - mit fallback für Tests
-const supabase = supabaseUrl && supabaseKey 
-  ? createClient(supabaseUrl, supabaseKey)
-  : null;
-
-// Funktion für sichere DB-Abfragen
-const safeQuery = async (queryFn) => {
-  if (!supabase) {
-    console.error("❌ Supabase Client nicht initialisiert - Key oder URL fehlt!");
-    return { data: null, error: new Error("Supabase Client nicht initialisiert") };
-  }
-  return await queryFn(supabase);
+  
+  // Client erstellen
+  return createClient(url, key);
 };
+
+// Startup-Diagnose (einmalig)
+const startupUrl = process.env.SUPABASE_URL;
+const startupKey = process.env.SUPABASE_SERVICE_KEY;
+console.log("🔧 Supabase URL:", startupUrl ? startupUrl.substring(0, 40) + "..." : "FEHLT!");
+console.log("🔧 Supabase Key:", startupKey ? `gesetzt (${startupKey.length} Zeichen)` : "FEHLT!");
+if (startupKey) {
+  console.log("🔧 Key Anfang:", startupKey.substring(0, 20) + "...");
+  console.log("🔧 Key Ende:", "..." + startupKey.slice(-10));
+  const parts = startupKey.split('.');
+  console.log("🔧 Key Teile:", parts.length);
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(atob(parts[1]));
+      console.log("🔧 Key Role:", payload.role);
+      console.log("🔧 Key Project:", payload.ref);
+    } catch (e) {
+      console.error("⚠️ Key Dekodierung fehlgeschlagen:", e.message);
+    }
+  }
+}
 
 // Health check
 app.get("/", (req, res) => {
@@ -146,10 +130,14 @@ app.post("/twilio/incoming", async (req, res) => {
     
     let business = null;
     
-    // Prüfen ob Supabase verfügbar ist
+    // Frischen Supabase Client erstellen (Lazy Initialization)
+    const supabase = getSupabaseClient();
+    
     if (!supabase) {
-      console.error("❌ Supabase Client nicht verfügbar - überspringe Business-Lookup");
+      console.error("❌ Supabase Client konnte nicht erstellt werden - überspringe Business-Lookup");
     } else {
+      console.log("✅ Supabase Client erfolgreich erstellt");
+      
       for (const numFormat of numbersToTry) {
         console.log(`🔍 Prüfe: ${numFormat}`);
         const { data, error } = await supabase
@@ -169,30 +157,29 @@ app.post("/twilio/incoming", async (req, res) => {
           break;
         }
       }
-    }
-    
-// Last resort: LIKE query for partial match
-    if (!business && supabase) {
-      console.log(`🔍 Versuche LIKE-Suche...`);
-      // Extract last 10 digits
-      const digitsOnly = normalizedNumber.replace(/\D/g, '');
-      const lastDigits = digitsOnly.slice(-10);
-      console.log(`🔍 Suche nach letzten 10 Ziffern: ${lastDigits}`);
       
-      const { data, error: likeError } = await supabase
-        .from("businesses")
-        .select("id, business_name, phone_number_assigned")
-        .like("phone_number_assigned", `%${lastDigits}`);
-      
-      if (likeError) {
-        console.error(`❌ LIKE-Suche Fehler:`, likeError.message);
-      }
-      
-      if (data && data.length === 1) {
-        business = data[0];
-        console.log(`✅ LIKE-Match gefunden: ${business.phone_number_assigned}`);
-      } else if (data && data.length > 1) {
-        console.log(`⚠️ Mehrere LIKE-Matches gefunden:`, data.map(b => b.phone_number_assigned));
+      // Last resort: LIKE query for partial match
+      if (!business) {
+        console.log(`🔍 Versuche LIKE-Suche...`);
+        const digitsOnly = normalizedNumber.replace(/\D/g, '');
+        const lastDigits = digitsOnly.slice(-10);
+        console.log(`🔍 Suche nach letzten 10 Ziffern: ${lastDigits}`);
+        
+        const { data, error: likeError } = await supabase
+          .from("businesses")
+          .select("id, business_name, phone_number_assigned")
+          .like("phone_number_assigned", `%${lastDigits}`);
+        
+        if (likeError) {
+          console.error(`❌ LIKE-Suche Fehler:`, likeError.message);
+        }
+        
+        if (data && data.length === 1) {
+          business = data[0];
+          console.log(`✅ LIKE-Match gefunden: ${business.phone_number_assigned}`);
+        } else if (data && data.length > 1) {
+          console.log(`⚠️ Mehrere LIKE-Matches gefunden:`, data.map(b => b.phone_number_assigned));
+        }
       }
     }
 
@@ -201,7 +188,7 @@ app.post("/twilio/incoming", async (req, res) => {
       businessName = business.business_name;
       console.log(`✅ Business gefunden: ${businessName} (${businessId})`);
     } else {
-      // Log all businesses for debugging - nur wenn supabase verfügbar
+      // Log all businesses for debugging
       if (supabase) {
         const { data: allBiz } = await supabase
           .from("businesses")
@@ -268,13 +255,19 @@ wsServer.on("connection", async (twilioWs, req) => {
       console.log("ℹ️ Keine Business-ID, verwende Standard-Prompt");
       businessInfoSection = `\n\nBegrüße den Anrufer freundlich mit "Guten Tag, Sie sprechen mit dem Telefonassistenten von ${bizName}. Wie kann ich Ihnen helfen?"`;
     } else {
-      try {
-        // Lade ALLE Business-Daten
-        const { data: business } = await supabase
-          .from("businesses")
-          .select("custom_greeting, category, opening_hours, availability_mode, availability_hours, voice_preference, address, forwarding_number")
-          .eq("id", bizId)
-          .single();
+      // Frischen Supabase Client erstellen
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        console.error("❌ Supabase Client nicht verfügbar für Business-Daten");
+        businessInfoSection = `\n\nBegrüße den Anrufer mit "Guten Tag, Sie sprechen mit dem Telefonassistenten von ${bizName}. Wie kann ich Ihnen helfen?"`;
+      } else {
+        try {
+          // Lade ALLE Business-Daten
+          const { data: business } = await supabase
+            .from("businesses")
+            .select("custom_greeting, category, opening_hours, availability_mode, availability_hours, voice_preference, address, forwarding_number")
+            .eq("id", bizId)
+            .single();
 
         if (business) {
           // Custom greeting oder Standard
@@ -411,8 +404,9 @@ wsServer.on("connection", async (twilioWs, req) => {
             scriptSection += `\nTerminbuchung online möglich unter: ${script.booking_link}`;
           }
         }
-      } catch (err) {
-        console.error("Fehler beim Laden der Business-Daten:", err.message);
+        } catch (err) {
+          console.error("Fehler beim Laden der Business-Daten:", err.message);
+        }
       }
     }
 
@@ -690,6 +684,13 @@ wsServer.on("connection", async (twilioWs, req) => {
       }
     }
 
+    // Frischen Supabase Client erstellen für das Speichern
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      console.error("❌ Supabase Client nicht verfügbar - Call-Log konnte nicht gespeichert werden");
+      return;
+    }
+    
     try {
       await supabase.from("call_logs").insert({
         business_id: businessId,
