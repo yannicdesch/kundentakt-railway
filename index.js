@@ -109,9 +109,24 @@ wsServer.on("connection", async (twilioWs, req) => {
   let openaiReady = false;
   let twilioStarted = false;
 
-  // Build system prompt from business data
+  // Build system prompt from business data - HANNE PERSONALITY
   const buildSystemPrompt = async (bizId, bizName) => {
-    let baseIdentity = `Du bist der freundliche Telefonassistent von ${bizName}. Sprich Deutsch und sei hilfsbereit.`;
+    // Hanne's core personality - experienced, calm, friendly office assistant
+    let baseIdentity = `Du bist Hanne, die digitale Anrufassistentin von ${bizName}. 
+
+PERSÖNLICHKEIT:
+- Du bist eine erfahrene, ruhige und freundliche Büroassistenz mit 20 Jahren Erfahrung im Handwerk
+- Du kennst alle Fachbegriffe (Rohrschelle, Dachsparren, Therme, Sicherungskasten, etc.)
+- Du sprichst die Anrufer mit "Du" an - persönlich und nahbar
+- Dein Ton ist warmherzig aber effizient, wie eine Kollegin die wirklich helfen will
+
+SPRECHSTIL:
+- Sprich natürlich und fließend, NICHT roboterhaft
+- Nutze kurze, klare Sätze - maximal 2 Sätze pro Antwort
+- Verwende natürliche Bestätigungen: "Okay, hab ich notiert.", "Alles klar.", "Verstanden, danke dir."
+- Kleine Füllwörter sind okay: "Also", "Schau mal", "Moment"
+- Antworte zügig und komm auf den Punkt`;
+
     let businessInfoSection = "";
     let openingHoursSection = "";
     let availabilitySection = "";
@@ -119,25 +134,28 @@ wsServer.on("connection", async (twilioWs, req) => {
     let servicesSection = "";
     let scriptSection = "";
 
+    // Standard greeting in Hanne style
+    const hanneGreeting = `Hallo, hier ist Hanne, der digitale Anrufassistent von ${bizName}. Aktuell ist gerade niemand persönlich erreichbar – aber ich bin gern für dich da. Worum geht's genau? Falls es dringend ist, sag mir das bitte direkt – zum Beispiel bei Heizung, Strom oder Wasserschaden. Ich leite dein Anliegen dann gezielt weiter.`;
+
     if (!bizId) {
       console.log("ℹ️ Keine Business-ID, verwende Standard-Prompt");
-      businessInfoSection = `\n\nBegrüße den Anrufer freundlich mit "Guten Tag, Sie sprechen mit dem Telefonassistenten von ${bizName}. Wie kann ich Ihnen helfen?"`;
+      businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich das beim Start):\n"${hanneGreeting}"`;
     } else {
       // Get business data via Edge Function
       const data = await callSupabaseAPI('get-business-data', { businessId: bizId });
       
       if (!data) {
         console.error("❌ Keine Business-Daten erhalten");
-        businessInfoSection = `\n\nBegrüße den Anrufer mit "Guten Tag, Sie sprechen mit dem Telefonassistenten von ${bizName}. Wie kann ich Ihnen helfen?"`;
+        businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich das beim Start):\n"${hanneGreeting}"`;
       } else {
         const { business, faqs, services, script } = data;
 
         if (business) {
-          // Custom greeting oder Standard
+          // Custom greeting oder Hanne-Standard
           if (business.custom_greeting) {
-            businessInfoSection = `\n\nDeine personalisierte Begrüßung: "${business.custom_greeting}" - erwähne dabei immer den Firmennamen ${bizName}.`;
+            businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich das beim Start):\n"${business.custom_greeting}"`;
           } else {
-            businessInfoSection = `\n\nBegrüße den Anrufer mit "Guten Tag, Sie sprechen mit dem Telefonassistenten von ${bizName}. Wie kann ich Ihnen helfen?"`;
+            businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich das beim Start):\n"${hanneGreeting}"`;
           }
 
           // Branche
@@ -150,17 +168,17 @@ wsServer.on("connection", async (twilioWs, req) => {
               'rohrreinigung': 'Rohrreinigung',
               'sonstiges': 'Sonstiges Handwerk'
             };
-            businessInfoSection += `\n\nBranche: ${categoryLabels[business.category] || business.category}`;
+            businessInfoSection += `\n\nBRANCHE: ${categoryLabels[business.category] || business.category}`;
           }
 
           // Adresse
           if (business.address) {
-            businessInfoSection += `\nFirmenadresse: ${business.address}`;
+            businessInfoSection += `\nFIRMENADRESSE: ${business.address}`;
           }
 
           // Weiterleitungsnummer
           if (business.forwarding_number) {
-            businessInfoSection += `\nRückrufnummer: ${business.forwarding_number}`;
+            businessInfoSection += `\nRÜCKRUFNUMMER: ${business.forwarding_number}`;
           }
 
           // Öffnungszeiten
@@ -171,7 +189,7 @@ wsServer.on("connection", async (twilioWs, req) => {
               thursday: 'Donnerstag', friday: 'Freitag', saturday: 'Samstag', sunday: 'Sonntag'
             };
             
-            openingHoursSection = "\n\nÖffnungszeiten des Betriebs:";
+            openingHoursSection = "\n\nÖFFNUNGSZEITEN:";
             for (const [day, dayData] of Object.entries(hours)) {
               if (dayLabels[day] && dayData && typeof dayData === 'object') {
                 if (dayData.active && dayData.from && dayData.to) {
@@ -186,48 +204,44 @@ wsServer.on("connection", async (twilioWs, req) => {
           // Erreichbarkeitszeiten
           if (business.availability_mode) {
             const modeLabels = {
-              'always': 'Der Telefonassistent ist rund um die Uhr erreichbar.',
-              'scheduled': 'Der Telefonassistent ist nur zu bestimmten Zeiten aktiv.',
-              'fallback': 'Der Telefonassistent springt ein, wenn der Betrieb nicht selbst abheben kann.'
+              'always': 'Ich bin rund um die Uhr erreichbar.',
+              'scheduled': 'Ich bin nur zu bestimmten Zeiten aktiv.',
+              'fallback': 'Ich springe ein, wenn der Betrieb nicht selbst abheben kann.'
             };
-            availabilitySection = `\n\nErreichbarkeit: ${modeLabels[business.availability_mode] || business.availability_mode}`;
+            availabilitySection = `\n\nERREICHBARKEIT: ${modeLabels[business.availability_mode] || business.availability_mode}`;
           }
         }
 
         // FAQs
         if (faqs?.length > 0) {
-          faqSection = "\n\nHäufig gestellte Fragen und Antworten:";
+          faqSection = "\n\nHÄUFIGE FRAGEN:";
           faqs.forEach((faq) => {
-            faqSection += `\n- Frage: ${faq.question}\n  Antwort: ${faq.answer}`;
+            faqSection += `\n- ${faq.question} → ${faq.answer}`;
           });
         }
 
         // Services
         if (services?.length > 0) {
-          servicesSection = "\n\nAngebotene Dienstleistungen:";
+          servicesSection = "\n\nDIENSTLEISTUNGEN:";
           services.forEach((s) => {
             servicesSection += `\n- ${s.service_name}`;
             if (s.description) servicesSection += `: ${s.description}`;
-            if (s.price_range) servicesSection += ` (Preis: ${s.price_range})`;
-            if (s.typical_duration) servicesSection += ` [Dauer: ${s.typical_duration}]`;
+            if (s.price_range) servicesSection += ` (${s.price_range})`;
+            if (s.typical_duration) servicesSection += ` [${s.typical_duration}]`;
             if (s.is_emergency_service) servicesSection += ` ⚡ NOTDIENST`;
           });
         }
 
         // Call Script
         if (script) {
-          if (script.greeting_text) {
-            const personalizedGreeting = script.greeting_text.replace(/Telefonassistenten(?! von)/g, `Telefonassistenten von ${bizName}`);
-            scriptSection += `\n\nEmpfohlener Begrüßungstext: ${personalizedGreeting}`;
-          }
           if (script.tone) {
-            scriptSection += `\nTonalität: ${script.tone}`;
+            scriptSection += `\n\nTONALITÄT: ${script.tone}`;
           }
           if (script.fallback_message) {
-            scriptSection += `\nWenn du nicht weiterhelfen kannst, sage: "${script.fallback_message}"`;
+            scriptSection += `\nWENN DU NICHT WEITERHELFEN KANNST: "${script.fallback_message}"`;
           }
           if (script.booking_link) {
-            scriptSection += `\nTerminbuchung online möglich unter: ${script.booking_link}`;
+            scriptSection += `\nONLINE-TERMINBUCHUNG: ${script.booking_link}`;
           }
         }
       }
@@ -236,17 +250,33 @@ wsServer.on("connection", async (twilioWs, req) => {
     // Zusammengebautes Prompt
     let prompt = baseIdentity + businessInfoSection + openingHoursSection + availabilitySection + faqSection + servicesSection + scriptSection;
 
-    prompt += `\n\nWichtige Verhaltensregeln:
-- Du arbeitest für ${bizName} - erwähne den Firmennamen in der Begrüßung!
-- Erfasse immer: Name, Telefonnummer und Anliegen des Anrufers
-- Bei Notfällen (Wasserrohrbruch, Stromausfall, Heizungsausfall etc.) markiere dies als DRINGEND
-- Frage nach, ob ein Rückruf gewünscht wird
-- Nenne bei Fragen nach Öffnungszeiten die hinterlegten Zeiten
-- Wenn nach Preisen gefragt wird, nenne die hinterlegten Preisspannen oder verweise auf ein Angebot
-- Sei freundlich, professionell und halte Antworten kurz
-- Beginne das Gespräch sofort mit der Begrüßung`;
+    prompt += `\n\nNOTFALL-ERKENNUNG:
+Erkenne diese Schlüsselwörter als DRINGEND/NOTFALL:
+- "Notfall", "dringend", "sofort"
+- "kein Strom", "Stromausfall", "Sicherung raus"
+- "Wasserrohrbruch", "Rohrbruch", "Überschwemmung", "Wasser läuft"
+- "Heizung aus", "keine Heizung", "Heizungsausfall"
+- "Gasgeruch", "Gas riecht"
 
-    console.log(`📝 System-Prompt für ${bizName} erstellt - ${prompt.length} Zeichen`);
+Bei Notfällen: Zeige Verständnis, bleib ruhig und versichere: "Das klingt dringend. Ich gebe das sofort weiter, damit sich jemand schnellstmöglich bei dir meldet."
+
+FEEDBACK-PHRASEN (nutze diese natürlich):
+- "Okay, ich hab das notiert."
+- "Danke dir. Ich gebe das so weiter."
+- "Alles klar, ist angekommen."
+- "Verstanden, kümmern wir uns drum."
+
+WICHTIGE REGELN:
+- Erfasse: Name, Telefonnummer (falls nicht automatisch erkannt), Anliegen
+- Frage nach, ob ein Rückruf gewünscht wird
+- Bei Preisfragen ohne Info: "Die genauen Kosten hängen vom Aufwand ab. Am besten macht ihr einen Termin zur Begutachtung."
+- KEINE medizinischen, finanziellen oder rechtlichen Ratschläge
+- Sei effizient - komm zum Punkt, keine langen Monologe
+
+GESPRÄCHSENDE:
+"Super, ich hab alles aufgenommen. Wir melden uns schnellstmöglich bei dir. Tschüss und einen schönen Tag noch!"`;
+
+    console.log(`📝 Hanne-Prompt für ${bizName} erstellt - ${prompt.length} Zeichen`);
     return prompt;
   };
 
@@ -266,21 +296,22 @@ wsServer.on("connection", async (twilioWs, req) => {
       session: {
         modalities: ["text", "audio"],
         instructions: systemPrompt,
-        voice: "alloy",
+        voice: "nova", // Nova: Weiblich, warm, natürlich - perfekt für Hanne
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: {
           type: "server_vad",
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500,
+          threshold: 0.4,           // Etwas sensitiver für schnellere Reaktion
+          prefix_padding_ms: 200,   // Weniger Verzögerung vor Antwort
+          silence_duration_ms: 400, // Schnellere Erkennung dass User fertig ist
         },
+        temperature: 0.7, // Etwas fokussierter für konsistente Antworten
       },
     };
     
     openaiWs.send(JSON.stringify(sessionConfig));
-    console.log("✅ Session.update gesendet");
+    console.log("✅ Hanne Session konfiguriert (Stimme: nova, schnelle Reaktion)");
   };
 
   // Trigger initial AI greeting
@@ -414,21 +445,37 @@ wsServer.on("connection", async (twilioWs, req) => {
       return;
     }
 
-    // Detect flags from transcript
+    // Detect flags from transcript - EXTENDED for Hanne
     const transcriptLower = fullTranscript.toLowerCase();
+    
+    // Erweiterte Notfall-Erkennung
     const isEmergency =
       transcriptLower.includes("notfall") ||
       transcriptLower.includes("dringend") ||
+      transcriptLower.includes("sofort") ||
       transcriptLower.includes("rohrbruch") ||
       transcriptLower.includes("wasserrohrbruch") ||
-      transcriptLower.includes("stromausfall");
+      transcriptLower.includes("wasser läuft") ||
+      transcriptLower.includes("überschwemmung") ||
+      transcriptLower.includes("stromausfall") ||
+      transcriptLower.includes("kein strom") ||
+      transcriptLower.includes("sicherung") ||
+      transcriptLower.includes("heizung aus") ||
+      transcriptLower.includes("heizungsausfall") ||
+      transcriptLower.includes("keine heizung") ||
+      transcriptLower.includes("gasgeruch") ||
+      transcriptLower.includes("gas riecht");
+      
     const needsCallback =
       transcriptLower.includes("rückruf") ||
-      transcriptLower.includes("zurückrufen");
+      transcriptLower.includes("zurückrufen") ||
+      transcriptLower.includes("melden");
+      
     const isQuoteRequest =
       transcriptLower.includes("angebot") ||
       transcriptLower.includes("kostenvoranschlag") ||
-      transcriptLower.includes("preis");
+      transcriptLower.includes("preis") ||
+      transcriptLower.includes("was kostet");
 
     // Generate AI summary
     let aiSummary = "";
