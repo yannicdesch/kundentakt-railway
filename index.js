@@ -55,16 +55,39 @@ const getSupabaseClient = () => {
     return null;
   }
   
-  // DEBUG: Log exakt was an createClient übergeben wird
-  console.log("🔐 CreateClient wird aufgerufen mit:");
-  console.log("   URL Länge:", url.length);
-  console.log("   Key Länge:", key.length);
-  console.log("   Key Typ:", typeof key);
-  console.log("   Key erste 30:", key.substring(0, 30));
-  console.log("   Key letzte 20:", key.slice(-20));
+  // DEBUG: Teste erst mit direktem HTTP-Request
+  console.log("🔐 Teste Key mit direktem HTTP-Request...");
   
-  // Client erstellen mit expliziten Optionen
-  const client = createClient(url, key, {
+  // Speichere URL und Key für späteren Zugriff
+  const clientUrl = url;
+  const clientKey = key;
+  
+  // Test: Direkter API-Aufruf ohne supabase-js
+  try {
+    const testResponse = await fetch(`${url}/rest/v1/businesses?limit=1`, {
+      method: 'GET',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (testResponse.ok) {
+      console.log("✅ Direkter HTTP-Test ERFOLGREICH! Status:", testResponse.status);
+    } else {
+      const errorText = await testResponse.text();
+      console.error("❌ Direkter HTTP-Test FEHLGESCHLAGEN! Status:", testResponse.status);
+      console.error("   Response:", errorText);
+      console.error("   Verwendeter Key (erste 50):", key.substring(0, 50));
+      console.error("   Verwendete URL:", url);
+    }
+  } catch (httpErr) {
+    console.error("❌ HTTP-Test Exception:", httpErr.message);
+  }
+  
+  // Client erstellen
+  const client = createClient(clientUrl, clientKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -72,12 +95,28 @@ const getSupabaseClient = () => {
     },
     global: {
       headers: {
-        'apikey': key
+        'apikey': clientKey
       }
     }
   });
   
+  console.log("✅ Supabase Client erfolgreich erstellt");
   return client;
+};
+
+// Mache getSupabaseClient async-kompatibel
+const getSupabaseClientSync = () => {
+  const url = process.env.SUPABASE_URL;
+  let key = process.env.SUPABASE_SERVICE_KEY;
+  
+  if (!url || !key) return null;
+  
+  key = key.replace(/[^\x20-\x7E]/g, '').replace(/[\s\n\r\t]+/g, '').trim();
+  
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+    global: { headers: { 'apikey': key } }
+  });
 };
 
 // Startup-Diagnose (einmalig)
