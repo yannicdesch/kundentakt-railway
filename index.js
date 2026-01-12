@@ -13,17 +13,38 @@ app.use(bodyParser.json());
 // Supabase Client - mit Validierung
 const getSupabaseConfig = () => {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_KEY;
+  let key = process.env.SUPABASE_SERVICE_KEY;
   
-  // Key bereinigen - Whitespace und Zeilenumbrüche entfernen
-  const cleanKey = key ? key.replace(/[\s\n\r]+/g, '') : null;
+  if (key) {
+    // Aggressive Bereinigung: 
+    // 1. Nur ASCII-Zeichen behalten (entfernt unicode/zero-width chars)
+    // 2. Nur alphanumerische Zeichen, Punkt, Unterstrich, Minus behalten (JWT-sicher)
+    const originalLength = key.length;
+    key = key.replace(/[^\x20-\x7E]/g, ''); // Nur druckbare ASCII
+    key = key.replace(/[\s\n\r\t]+/g, ''); // Whitespace entfernen
+    key = key.trim();
+    
+    if (key.length !== originalLength) {
+      console.log(`⚠️ Key hatte ${originalLength - key.length} unsichtbare Zeichen - wurden entfernt`);
+    }
+    
+    // Validiere JWT-Format
+    if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(key)) {
+      console.error("❌ WARNUNG: Key sieht nicht wie ein gültiges JWT aus!");
+      console.log("🔧 Key Inhalt (hex der ersten 50 Bytes):", Buffer.from(key.substring(0, 50)).toString('hex'));
+    }
+  }
   
-  return { url, key: cleanKey };
+  return { url, key };
 };
 
 const { url: supabaseUrl, key: supabaseKey } = getSupabaseConfig();
 
-// Validierung vor Client-Erstellung
+// Debug: Zeige exakte Key-Bytes für Diagnose
+if (supabaseKey) {
+  const keyBytes = Buffer.from(supabaseKey);
+  console.log("🔧 Key Byte-Länge:", keyBytes.length);
+}
 if (!supabaseUrl) {
   console.error("❌ FATAL: SUPABASE_URL ist nicht gesetzt!");
 }
