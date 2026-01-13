@@ -60,10 +60,11 @@ app.post("/twilio/incoming", async (req, res) => {
   const callSid = req.body.CallSid || "";
 
   console.log(`📞 Eingehender Anruf von ${callerNumber} an ${toNumber}`);
+  console.log(`📞 Twilio-Daten: CallSid=${callSid}, AccountSid=${req.body.AccountSid || 'unbekannt'}`);
 
   // Look up business by phone number via Edge Function
   let businessId = "";
-  let businessName = "Kundentakt";
+  let businessName = "";
 
   const result = await callSupabaseAPI('lookup-business', { phoneNumber: toNumber });
   
@@ -72,7 +73,10 @@ app.post("/twilio/incoming", async (req, res) => {
     businessName = result.business.business_name;
     console.log(`✅ Business gefunden: ${businessName} (${businessId})`);
   } else {
-    console.log(`⚠️ Kein Business gefunden für: ${toNumber}`);
+    console.log(`❌ Kein Business gefunden für Nummer: ${toNumber}`);
+    console.log(`⚠️ ACHTUNG: Agent wird ohne Firmenkontext gestartet!`);
+    // Set empty name to force Hanne to use generic greeting
+    businessName = "";
   }
 
   const response = `
@@ -100,7 +104,7 @@ wsServer.on("connection", async (twilioWs, req) => {
   let businessId = "";
   let callerNumber = "";
   let callSid = "";
-  let businessName = "Kundentakt";
+  let businessName = "";
   let callStartTime = Date.now();
   let transcript = [];
   let openaiWs = null;
@@ -111,8 +115,11 @@ wsServer.on("connection", async (twilioWs, req) => {
 
 // Build system prompt from business data - HANNE PERSONALITY
   const buildSystemPrompt = async (bizId, bizName) => {
+    // Determine the display name - use the actual business name or fallback
+    const displayName = bizName && bizName.trim() !== "" ? bizName : "diesem Handwerksbetrieb";
+    
     // Hanne's core personality - experienced, calm, friendly office assistant
-    let baseIdentity = `Du bist Hanne, die digitale Anrufassistentin von ${bizName}. 
+    let baseIdentity = `Du bist Hanne, die digitale Anrufassistentin von ${displayName}. 
 
 PERSÖNLICHKEIT:
 - Du bist eine erfahrene, ruhige und freundliche Büroassistenz mit 20 Jahren Erfahrung im Handwerk
@@ -136,8 +143,8 @@ SPRECHSTIL:
     let servicesSection = "";
     let scriptSection = "";
 
-    // Standard greeting in Hanne style
-    const hanneGreeting = `Hallo, hier ist Hanne, der digitale Anrufassistent von ${bizName}. Aktuell ist gerade niemand persönlich erreichbar – aber ich bin gern für dich da. Worum geht's genau? Falls es dringend ist, sag mir das bitte direkt – zum Beispiel bei Heizung, Strom oder Wasserschaden. Ich leite dein Anliegen dann gezielt weiter.`;
+    // Standard greeting in Hanne style - uses displayName
+    const hanneGreeting = `Hallo, hier ist Hanne, der digitale Anrufassistent von ${displayName}. Aktuell ist gerade niemand persönlich erreichbar – aber ich bin gern für dich da. Worum geht's genau? Falls es dringend ist, sag mir das bitte direkt – zum Beispiel bei Heizung, Strom oder Wasserschaden. Ich leite dein Anliegen dann gezielt weiter.`;
 
     if (!bizId) {
       console.log("ℹ️ Keine Business-ID, verwende Standard-Prompt");
@@ -426,12 +433,15 @@ GESPRÄCHSENDE:
         businessId = params.businessId || "";
         callerNumber = params.callerNumber || "";
         callSid = params.callSid || "";
-        businessName = params.businessName || "Kundentakt";
+        businessName = params.businessName || "";
         streamSid = data.start.streamSid || "";
         callStartTime = Date.now();
         twilioStarted = true;
         
-        console.log(`📋 Twilio Stream: ${businessName} (${businessId || 'kein Match'})`);
+        console.log(`📋 Twilio Stream gestartet:`);
+        console.log(`   - Business: ${businessName || '(kein Name)'}`);
+        console.log(`   - Business-ID: ${businessId || '(keine ID)'}`);
+        console.log(`   - Anrufer: ${callerNumber}`);
         await tryConfigureAndStart();
       }
 
