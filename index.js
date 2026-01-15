@@ -148,23 +148,23 @@ SPRECHSTIL:
 
     if (!bizId) {
       console.log("ℹ️ Keine Business-ID, verwende Standard-Prompt");
-      businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich das beim Start):\n"${hanneGreeting}"`;
+      businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich diese EINMAL zu Beginn des Gesprächs, NICHT wiederholen):\n"${hanneGreeting}"`;
     } else {
       // Get business data via Edge Function
       const data = await callSupabaseAPI('get-business-data', { businessId: bizId });
       
       if (!data) {
         console.error("❌ Keine Business-Daten erhalten");
-        businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich das beim Start):\n"${hanneGreeting}"`;
+        businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich diese EINMAL zu Beginn des Gesprächs, NICHT wiederholen):\n"${hanneGreeting}"`;
       } else {
         const { business, faqs, services, script } = data;
 
         if (business) {
           // Custom greeting oder Hanne-Standard
           if (business.custom_greeting) {
-            businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich das beim Start):\n"${business.custom_greeting}"`;
+            businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich diese EINMAL zu Beginn des Gesprächs, NICHT wiederholen):\n"${business.custom_greeting}"`;
           } else {
-            businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich das beim Start):\n"${hanneGreeting}"`;
+            businessInfoSection = `\n\nDEINE BEGRÜSSUNG (sprich diese EINMAL zu Beginn des Gesprächs, NICHT wiederholen):\n"${hanneGreeting}"`;
           }
 
           // Branche
