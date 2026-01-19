@@ -475,37 +475,48 @@ GESPRÄCHSENDE:
       return;
     }
 
-    // Detect flags from transcript - EXTENDED for Hanne
-    const transcriptLower = fullTranscript.toLowerCase();
+    // Detect flags from transcript - ONLY from caller messages (not assistant)
+    // This prevents false positives from Hanne's greeting mentioning "dringend", "Heizung", etc.
+    const callerMessagesOnly = transcript
+      .filter((t) => t.role === "user")
+      .map((t) => t.text)
+      .join(" ")
+      .toLowerCase();
     
-    // Erweiterte Notfall-Erkennung
+    // Erweiterte Notfall-Erkennung - nur Anrufer-Nachrichten
     const isEmergency =
-      transcriptLower.includes("notfall") ||
-      transcriptLower.includes("dringend") ||
-      transcriptLower.includes("sofort") ||
-      transcriptLower.includes("rohrbruch") ||
-      transcriptLower.includes("wasserrohrbruch") ||
-      transcriptLower.includes("wasser läuft") ||
-      transcriptLower.includes("überschwemmung") ||
-      transcriptLower.includes("stromausfall") ||
-      transcriptLower.includes("kein strom") ||
-      transcriptLower.includes("sicherung") ||
-      transcriptLower.includes("heizung aus") ||
-      transcriptLower.includes("heizungsausfall") ||
-      transcriptLower.includes("keine heizung") ||
-      transcriptLower.includes("gasgeruch") ||
-      transcriptLower.includes("gas riecht");
+      callerMessagesOnly.includes("notfall") ||
+      callerMessagesOnly.includes("dringend") ||
+      callerMessagesOnly.includes("sofort") ||
+      callerMessagesOnly.includes("rohrbruch") ||
+      callerMessagesOnly.includes("wasserrohrbruch") ||
+      callerMessagesOnly.includes("wasser läuft") ||
+      callerMessagesOnly.includes("überschwemmung") ||
+      callerMessagesOnly.includes("stromausfall") ||
+      callerMessagesOnly.includes("kein strom") ||
+      callerMessagesOnly.includes("sicherung raus") ||
+      callerMessagesOnly.includes("sicherung fliegt") ||
+      callerMessagesOnly.includes("heizung aus") ||
+      callerMessagesOnly.includes("heizung geht nicht") ||
+      callerMessagesOnly.includes("heizungsausfall") ||
+      callerMessagesOnly.includes("keine heizung") ||
+      callerMessagesOnly.includes("gasgeruch") ||
+      callerMessagesOnly.includes("gas riecht") ||
+      callerMessagesOnly.includes("es brennt") ||
+      callerMessagesOnly.includes("feuer");
       
     const needsCallback =
-      transcriptLower.includes("rückruf") ||
-      transcriptLower.includes("zurückrufen") ||
-      transcriptLower.includes("melden");
+      callerMessagesOnly.includes("rückruf") ||
+      callerMessagesOnly.includes("zurückrufen") ||
+      callerMessagesOnly.includes("rufen sie mich an") ||
+      callerMessagesOnly.includes("bitte melden");
       
     const isQuoteRequest =
-      transcriptLower.includes("angebot") ||
-      transcriptLower.includes("kostenvoranschlag") ||
-      transcriptLower.includes("preis") ||
-      transcriptLower.includes("was kostet");
+      callerMessagesOnly.includes("angebot") ||
+      callerMessagesOnly.includes("kostenvoranschlag") ||
+      callerMessagesOnly.includes("preis") ||
+      callerMessagesOnly.includes("was kostet") ||
+      callerMessagesOnly.includes("kosten");
 
     // Generate AI summary
     let aiSummary = "";
