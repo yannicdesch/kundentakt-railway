@@ -329,11 +329,11 @@ GESPRÄCHSENDE:
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: {
           type: "server_vad",
-          threshold: 0.6,           // Höher = weniger empfindlich, verhindert Unterbrechungen
-          prefix_padding_ms: 400,   // Mehr Puffer am Anfang
-          silence_duration_ms: 800, // Längere Stille bevor Antwort, verhindert Überlappung
+          threshold: 0.7,            // Höher = weniger empfindlich, wartet besser ab
+          prefix_padding_ms: 500,    // Mehr Puffer am Anfang - fängt Sprache sauberer auf
+          silence_duration_ms: 1200, // Längere Stille (1.2s) bevor Hanne antwortet
         },
-        temperature: 0.6,           // Weniger kreativ = konsistentere Antworten
+        temperature: 0.6,            // Weniger kreativ = konsistentere Antworten
       },
     };
     
@@ -381,7 +381,8 @@ GESPRÄCHSENDE:
 
       if (data.type === "session.updated") {
         console.log("✅ OpenAI Session konfiguriert");
-        setTimeout(triggerGreeting, 500);
+        // Warte 1.5 Sekunden bevor Hanne grüßt - gibt Anrufer Zeit anzukommen
+        setTimeout(triggerGreeting, 1500);
       }
 
       if (data.type === "error") {
